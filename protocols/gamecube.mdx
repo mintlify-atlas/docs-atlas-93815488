@@ -1,0 +1,231 @@
+---
+title: "GameCube Protocol"
+description: "Joybus single-wire bidirectional protocol at 250kbps for GameCube and Wii controller emulation. Supports up to 4 players, analog triggers, rumble, and keyboard mode."
+---
+
+The GameCube output interface emulates a GameCube controller connected to a GameCube or Wii console via the Joybus protocol. It supports up to 4 players, two analog sticks, two analog triggers, rumble feedback, and an optional keyboard mode for Phantasy Star Online.
+
+## Protocol overview
+
+<CardGroup cols={2}>
+  <Card title="Wire protocol" icon="ethernet">
+    Single-wire bidirectional Joybus at 250 kbit/s (4us per bit)
+  </Card>
+  <Card title="System clock" icon="microchip">
+    130MHz overclock required — `set_sys_clock_khz(130000, true)`
+  </Card>
+  <Card title="PIO program" icon="code">
+    `joybus.pio` from `lib/joybus-pio`, runs on Core 1 via `__not_in_flash_func`
+  </Card>
+  <Card title="Data pin" icon="plug">
+    GPIO 7 (KB2040 default), `GC_DATA_PIN` in `gamecube_device.h`
+  </Card>
+</CardGroup>
+
+<Warning>
+  The 130MHz system clock is mandatory. Without it, Joybus timing falls outside the console's tolerance (+/- 0.5us per bit) and the adapter will not be recognized.
+</Warning>
+
+### How it works
+
+The console polls the controller roughly every 16ms. The adapter responds with a `gc_report_t` containing digital buttons, two analog stick axes, and two analog trigger values. The poll command itself carries a rumble byte — the adapter reads this each cycle to drive vibration on the connected USB or Bluetooth controller.
+
+### Bit encoding
+
+Each bit is a 4us period with three phases:
+
+```
+Logical 0:        Logical 1:
+  1us  2us  1us     1us  2us  1us
+  LOW  LOW  HIGH    LOW  HIGH HIGH
+```
+
+Bytes are 9-bit (8 data + 1 stop bit). The stop bit allows continuous multi-byte transmission without inter-byte gaps.
+
+## Connector pinout
+
+| Pin | Signal | Description |
+|-----|--------|-------------|
+| 1 | VCC | +5V power |
+| 2 | DATA | Bidirectional data line (3.3V logic, open-drain) |
+| 3 | GND | Ground |
+| 4 | GND | Ground (shield) |
+| 5 | N/C | Not connected |
+| 6 | 3.3V | +3.3V power (optional, some boards) |
+
+<Info>
+  The data line is open-drain with a ~1kΩ pull-up on the console side. Both sides can drive the line LOW; the idle state is HIGH. Both sides must go tri-state when not transmitting to avoid bus contention.
+</Info>
+
+## Command set
+
+| Command | Hex | Bytes | Response |
+|---------|-----|-------|----------|
+| PROBE | `0x00` | 1 | 3 bytes (device status) |
+| RESET | `0xFF` | 1 | 3 bytes (device status) |
+| ORIGIN | `0x41` | 1 | 10 bytes (calibration report) |
+| RECALIBRATE | `0x42` | 3 | 10 bytes (calibration report) |
+| POLL | `0x40` | 3 | 8 bytes (controller report) |
+| KEYBOARD | `0x54` | 3 | 8 bytes (keyboard report) |
+
+The adapter identifies as a standard controller (`0x0009`) with rumble support. In keyboard mode it identifies as `0x2008`.
+
+### Poll modes
+
+The console requests a specific report format in byte 1 of the poll command. The adapter starts in Mode 3 and switches to keyboard mode when toggled.
+
+| Mode | Constant | Description |
+|------|----------|-------------|
+| 0 | `BUTTON_MODE_0` | 4-bit triggers, 4-bit analog A/B |
+| 1 | `BUTTON_MODE_1` | 4-bit C-stick, full triggers |
+| 2 | `BUTTON_MODE_2` | 4-bit C-stick, 4-bit triggers |
+| 3 | `BUTTON_MODE_3` | Standard — full 8-bit everything (default) |
+| 4 | `BUTTON_MODE_4` | Full C-stick, full analog A/B |
+| KB | `BUTTON_MODE_KB` | Keyboard mode (3 keypresses + checksum) |
+
+### Controller report format (Mode 3)
+
+8 bytes returned on each poll:
+
+| Byte | Content |
+|------|---------|
+| 0 | A, B, X, Y, Start, Origin, ErrLatch, ErrStat |
+| 1 | DL, DR, DD, DU, Z, R, L, High1 |
+| 2 | Left stick X (0x00=left, 0x80=center, 0xFF=right) |
+| 3 | Left stick Y (0x00=down, 0x80=center, 0xFF=up) |
+| 4 | C-stick X |
+| 5 | C-stick Y |
+| 6 | L analog (0x00=released, 0xFF=full) |
+| 7 | R analog (0x00=released, 0xFF=full) |
+
+## Player support
+
+- **Max players**: 4
+- **Routing**: MERGE mode by default (all inputs merged to a single controller output)
+- **Multitap**: Each adapter instance emulates one controller port
+
+## Button mapping
+
+Defined in `gamecube_buttons.h` using `GC_BUTTON_*` aliases over `JP_BUTTON_*` constants.
+
+| JP_BUTTON_* | GC button | Notes |
+|-------------|-----------|-------|
+| `JP_BUTTON_B1` | B | Small red button |
+| `JP_BUTTON_B2` | A | Large green button |
+| `JP_BUTTON_B3` | Y | Above A |
+| `JP_BUTTON_B4` | X | Right of A |
+| `JP_BUTTON_L1` | (disabled) | Not mapped in default profile |
+| `JP_BUTTON_R1` | Z | Digital, above R trigger |
+| `JP_BUTTON_L2` | L | Analog + digital trigger |
+| `JP_BUTTON_R2` | R | Analog + digital trigger |
+| `JP_BUTTON_S1` | (profile switch) | Hold 2s then D-pad to cycle |
+| `JP_BUTTON_S2` | Start | Start button |
+| `JP_BUTTON_DU/DD/DL/DR` | D-pad | Direct mapping |
+
+## Analog mapping
+
+| Input | GC output | Notes |
+|-------|-----------|-------|
+| Left stick X/Y | Control Stick | Y-axis inverted (HID 0=up → GC 0=down). Clamped to 1–255 (some games reject 0). |
+| Right stick X/Y | C-Stick | Same inversion and clamping. |
+| L2 analog | L trigger (0–255) | Per-profile threshold for digital L press. |
+| R2 analog | R trigger (0–255) | Per-profile threshold for digital R press. |
+
+Keyboard input applies a 0.61x scale factor (78/128 range) to analog values to match the reduced stick travel expected by games.
+
+<Tip>
+  Controllers without analog triggers (e.g., Switch Pro) synthesize a full 255 analog value from the digital press in `profile_apply()`, so games that require analog trigger data still work correctly.
+</Tip>
+
+## Rumble
+
+The GameCube console encodes rumble in the stop bit of each poll command:
+- `0x40 0x03 | 0` → Rumble OFF
+- `0x40 0x03 | 1` → Rumble ON
+
+When active, the adapter routes a 255 rumble value to the connected USB or Bluetooth controller's vibration motor via the player manager.
+
+## Keyboard mode
+
+Toggle keyboard mode by pressing **Scroll Lock** or **F14** on a connected USB keyboard.
+
+- All standard HID keys are mapped to GameCube keyboard scancodes via a 256-entry lookup table
+- Reports contain 3 simultaneous keypresses, a rolling 4-bit counter, and an XOR checksum
+- Works with Phantasy Star Online Episode I & II
+- **A1** (Home/Guide) sends the gc-swiss IGR combo: Select + D-down + B + R
+
+### Keyboard report format
+
+8 bytes returned on each `0x54` poll:
+
+| Byte | Content |
+|------|---------|
+| 0 | Counter (4 bits) + unknown (2 bits) + ErrLatch + ErrStat |
+| 1–3 | Reserved / undetermined |
+| 4 | Keypress 1 (GC keycode) |
+| 5 | Keypress 2 (GC keycode) |
+| 6 | Keypress 3 (GC keycode) |
+| 7 | Checksum (XOR of keypresses 1–3 and counter) |
+
+<Info>
+  The `0x54` keyboard command and checksum format were reverse-engineered from hardware — they were not publicly documented. See `docs/protocols/GAMECUBE_JOYBUS.md` for the full keycode table.
+</Info>
+
+## Profiles
+
+Profiles are defined in `src/apps/usb2gc/profiles.h` as `gc_profile_t` structs with button remapping and per-trigger thresholds.
+
+**Switching profiles:**
+
+<Steps>
+  <Step title="Enter profile select mode">
+    Hold **Select** for 2 seconds.
+  </Step>
+  <Step title="Cycle profiles">
+    Press **D-Pad Up** to cycle forward or **D-Pad Down** to cycle backward.
+  </Step>
+  <Step title="Confirm">
+    The controller rumbles and the LED flashes to confirm. The selection saves to flash and persists across power cycles.
+  </Step>
+</Steps>
+
+## Build commands
+
+<CodeGroup>
+
+```bash usb2gc (KB2040)
+make usb2gc_kb2040
+```
+
+```bash bt2gc (Pico W)
+make bt2gc_pico_w
+```
+
+</CodeGroup>
+
+Output: `releases/joypad_<commit>_<app>_<board>.uf2`
+
+## Apps using this output
+
+| App | Description |
+|-----|-------------|
+| `usb2gc` | USB/Bluetooth controllers to GameCube |
+| `bt2gc` | Bluetooth-only controllers to GameCube (Pico W) |
+| `lodgenet2gc` | LodgeNet hotel controllers to GameCube |
+
+## Known issues and limitations
+
+<AccordionGroup>
+  <Accordion title="130MHz clock is mandatory">
+    The Joybus bit period is 4us with a ±0.5us tolerance. At the default 125MHz clock, PIO timing drifts outside this window. Always call `set_sys_clock_khz(130000, true)` before initializing the PIO state machine.
+  </Accordion>
+  <Accordion title="PIO state machine conflicts">
+    NeoPixel (WS2812) always claims PIO0 SM0. PIO-USB uses PIO0 when CYW43 is active. The joybus PIO must be assigned to a non-conflicting state machine. Verify PIO0/PIO1 assignments when combining with other peripherals.
+  </Accordion>
+  <Accordion title="Flash contention on RP2350 (Pico 2 W)">
+    On RP2350, the CYW43 driver on Core 0 periodically locks flash. All Core 1 functions handling Joybus timing must be RAM-resident (`__not_in_flash_func`). Inline calls to flash-resident code from Core 1 will cause hard faults.
+  </Accordion>
+  <Accordion title="Some games reject analog value 0">
+    A small number of GameCube games do not accept 0 as a valid analog stick value. The driver clamps all stick output to the range 1–255.
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,322 @@
+---
+title: "Adding an Output Interface"
+description: "How to implement an OutputInterface for a new console or output device, including PIO program constraints and Core 1 timing requirements."
+---
+
+An output interface encapsulates everything needed to emulate a controller on a target console: hardware initialization, the Core 1 timing loop that services console polling requests, and optional rumble and player LED feedback. Console output protocols use RP2040 PIO state machines for precise, microsecond-accurate timing.
+
+## File location
+
+```
+src/native/device/<console>/
+  <console>_device.c     Output interface implementation
+  <console>_device.h     Header (exported OutputInterface symbol)
+  <console>.pio          PIO program (if needed)
+```
+
+Existing console directories: `gamecube/`, `dreamcast/`, `pcengine/`, `nuon/`, `3do/`, `loopy/`, `n64/`, `nes/`, `uart/`, `gpio/`.
+
+## The OutputInterface struct
+
+Defined in `src/core/output_interface.h`:
+
+```c
+typedef struct {
+    const char* name;
+    output_target_t target;
+
+    void (*init)(void);            // Initialize hardware, PIO, clock
+    void (*task)(void);            // Core 0 periodic task (NULL if not needed)
+    void (*core1_task)(void);      // Core 1 loop for timing-critical output
+
+    // Feedback to input devices
+    bool (*get_feedback)(output_feedback_t* fb);  // Rich feedback (rumble + LED)
+    uint8_t (*get_rumble)(void);                   // Simple rumble (0-255)
+    uint8_t (*get_player_led)(void);               // Player LED index
+
+    // Profile system
+    uint8_t (*get_profile_count)(void);
+    uint8_t (*get_active_profile)(void);
+    void (*set_active_profile)(uint8_t index);
+    const char* (*get_profile_name)(uint8_t index);
+
+    uint8_t (*get_trigger_threshold)(void);
+} OutputInterface;
+```
+
+For a minimal implementation, you only need `init`, `core1_task`, and `get_rumble`. All other fields can be `NULL`.
+
+## Core 1 architecture
+
+On RP2040, the console output protocol runs exclusively on **Core 1**:
+
+- **Core 0**: USB/BT polling, input processing, profile switching, LED updates
+- **Core 1**: Console protocol loop — waits for the console to poll, reads from the router, sends the response
+
+This split ensures the console protocol is never interrupted by USB or BT activity.
+
+```
+Core 0                          Core 1
+──────                          ──────
+router_submit_input()           core1_task() {
+    │                               while (1) {
+    ▼                                   Console_WaitForPoll()
+router output state                     update_output()  ← reads router
+                                        Console_SendReport()
+                                    }
+                               }
+```
+
+## Adding an OUTPUT_TARGET constant
+
+Add your console to the `output_target_t` enum in `src/core/router/router.h` before `OUTPUT_TARGET_COUNT`:
+
+```c
+typedef enum {
+    OUTPUT_TARGET_NONE = -1,
+    OUTPUT_TARGET_GAMECUBE = 0,
+    OUTPUT_TARGET_PCENGINE,
+    OUTPUT_TARGET_3DO,
+    OUTPUT_TARGET_NUON,
+    OUTPUT_TARGET_XBOXONE,
+    OUTPUT_TARGET_LOOPY,
+    OUTPUT_TARGET_DREAMCAST,
+    OUTPUT_TARGET_N64,
+    OUTPUT_TARGET_GPIO,
+    OUTPUT_TARGET_USB_DEVICE,
+    OUTPUT_TARGET_BLE_PERIPHERAL,
+    OUTPUT_TARGET_UART,
+    OUTPUT_TARGET_MYCONSOLE,    // Add your target here
+    OUTPUT_TARGET_COUNT         // Must remain last
+} output_target_t;
+```
+
+## Implementing the interface
+
+The GameCube device driver (`src/native/device/gamecube/gamecube_device.c`) is the reference implementation.
+
+### init
+
+Initialize everything the console protocol needs: overclock the CPU if required, configure GPIO pins, load PIO programs, set up protocol state, and initialize the flash/profile system.
+
+```c
+void myconsole_init(void)
+{
+    // If your console requires a specific clock speed, set it first
+    // GameCube requires 130 MHz — set before any PIO init
+    set_sys_clock_khz(130000, true);
+
+    // Re-initialize UART after clock change (baud rate changes with clock)
+    stdio_init_all();
+
+    // Initialize flash settings
+    flash_init();
+
+    // Configure GPIO data pin
+    gpio_init(MYCONSOLE_DATA_PIN);
+    gpio_set_dir(MYCONSOLE_DATA_PIN, GPIO_OUT);
+
+    // Load PIO program and initialize state machine
+    // (PIO programs compiled from .pio files via CMake)
+    uint offset = pio_add_program(pio0, &myconsole_program);
+    myconsole_program_init(pio0, 0, offset, MYCONSOLE_DATA_PIN);
+
+    printf("[myconsole] Initialized\n");
+}
+```
+
+<Warning>
+  **GameCube requires 130 MHz**: `set_sys_clock_khz(130000, true)` must be called before any PIO initialization. The joybus PIO program depends on the exact clock frequency for correct bit timing. This is done in `ngc_init()` at `src/native/device/gamecube/gamecube_device.c:192`.
+</Warning>
+
+### core1_task
+
+The Core 1 loop. This function runs forever on Core 1. It waits for the console to initiate a poll cycle, reads the latest controller state from the router, and sends a response.
+
+Every function called from `core1_task` must be declared with `__not_in_flash_func`. This ensures the function and any data it accesses are in SRAM, not flash. On RP2350 (Pico 2 W), the CYW43 driver on Core 0 periodically locks flash — any Core 1 function accessing flash will hard-fault.
+
+```c
+void __not_in_flash_func(myconsole_core1_task)(void)
+{
+    // Required for safe flash writes from Core 0
+    flash_safe_execute_core_init();
+
+    while (1) {
+        // Block until the console polls us
+        MyconsoleConsole_WaitForPoll(&console);
+
+        // Update the output report from the router
+        myconsole_update_output();
+
+        // Send the report back to the console
+        MyconsoleConsole_SendReport(&console, &report);
+    }
+}
+
+void __not_in_flash_func(myconsole_update_output)(void)
+{
+    // Read latest state from router for player slot 0
+    const input_event_t* event = router_get_output(OUTPUT_TARGET_MYCONSOLE, 0);
+    if (!event) return;
+
+    // Apply profile remapping
+    const profile_t* profile = profile_get_active(OUTPUT_TARGET_MYCONSOLE);
+    profile_output_t output;
+    profile_apply(profile,
+                  event->buttons,
+                  event->analog[ANALOG_LX], event->analog[ANALOG_LY],
+                  event->analog[ANALOG_RX], event->analog[ANALOG_RY],
+                  event->analog[ANALOG_L2], event->analog[ANALOG_R2],
+                  event->analog[ANALOG_RZ],
+                  &output);
+
+    // Map profile output to console-specific report
+    // Console Y-axis is often inverted vs HID — re-invert here if needed
+    report.stick_x = output.left_x;
+    report.stick_y = 255 - output.left_y;  // Invert: HID 0=up, console 0=down
+    report.a_button = (output.buttons & MYCONSOLE_BUTTON_A) ? 1 : 0;
+    // … map remaining buttons …
+}
+```
+
+<Note>
+  The router stores the latest `input_event_t` per output target and player slot. `router_get_output(target, player_id)` returns a pointer to the current state, or `NULL` if no input has arrived yet. The pointer is valid until the next call — do not store it across loop iterations.
+</Note>
+
+### task (Core 0 periodic work)
+
+Optional. Use this for work that must run on Core 0 — for example, reading rumble state from the console and forwarding it to USB input devices. This is how the GameCube app forwards rumble:
+
+```c
+// In app.c app_task():
+void app_task(void)
+{
+    if (gamecube_output_interface.get_rumble) {
+        uint8_t rumble = gamecube_output_interface.get_rumble();
+        for (int i = 0; i < playersCount; i++) {
+            feedback_set_rumble(i, rumble, rumble);
+        }
+    }
+}
+```
+
+If you do not need Core 0 periodic work, set `.task = NULL` in the interface.
+
+### get_rumble and get_player_led
+
+Simple accessors that return the current rumble state and player LED index. Updated from within `core1_task` when the console communicates feedback.
+
+```c
+static uint8_t myconsole_rumble = 0;
+static uint8_t myconsole_player_led = 0;
+
+static uint8_t myconsole_get_rumble(void) { return myconsole_rumble; }
+static uint8_t myconsole_get_player_led(void) { return myconsole_player_led; }
+```
+
+## PIO program constraints
+
+<AccordionGroup>
+  <Accordion title="32-instruction limit">
+    Each PIO program is limited to 32 instructions. All PIO programs in a single PIO block share one instruction memory, so the total across all programs loaded in a block must not exceed 32 instructions. Optimize aggressively or split logic across two state machines.
+
+    Existing programs split across multiple files:
+    - PCEngine: `plex.pio`, `clock.pio`, `select.pio`
+    - Nuon: `polyface_read.pio`, `polyface_send.pio`
+    - LodgeNet: swaps programs at runtime via `pio_remove_program` / `pio_add_program`
+  </Accordion>
+
+  <Accordion title="PIO block assignment">
+    On Pico W, CYW43 uses **PIO1**. PIO-USB uses **PIO0**. NeoPixel always claims a PIO0 state machine. If your output driver uses PIO, it must use PIO0 and must not conflict with NeoPixel. Plan state machine allocation carefully.
+  </Accordion>
+
+  <Accordion title="GameCube requires 130 MHz">
+    The `joybus.pio` program used for GameCube depends on the system clock being 130 MHz for correct 1 Mbit/s joybus timing. Call `set_sys_clock_khz(130000, true)` before `pio_add_program`. This is the only console in the codebase that requires a clock change.
+  </Accordion>
+</AccordionGroup>
+
+## __not_in_flash_func requirement
+
+Any function called from Core 1 — directly or indirectly — must be in SRAM:
+
+```c
+// Correct: function is in SRAM
+void __not_in_flash_func(myconsole_core1_task)(void) { … }
+void __not_in_flash_func(myconsole_update_output)(void) { … }
+
+// Wrong: function may be in flash, will crash on RP2350 with CYW43
+void myconsole_update_output(void) { … }
+```
+
+This includes any helper functions called from `core1_task`. Mark them all with `__not_in_flash_func`. On RP2040 (without CYW43), flash access from Core 1 usually works but is non-deterministic in timing. On RP2350 with the CYW43 driver it will hard-fault.
+
+## Declaring the interface
+
+```c
+// myconsole_device.c
+const OutputInterface myconsole_output_interface = {
+    .name             = "MyConsole",
+    .target           = OUTPUT_TARGET_MYCONSOLE,
+    .init             = myconsole_init,
+    .task             = NULL,
+    .core1_task       = myconsole_core1_task,
+    .get_rumble       = myconsole_get_rumble,
+    .get_player_led   = myconsole_get_player_led,
+    .get_feedback     = NULL,
+    .get_profile_count   = NULL,
+    .get_active_profile  = NULL,
+    .set_active_profile  = NULL,
+    .get_profile_name    = NULL,
+    .get_trigger_threshold = NULL,
+};
+```
+
+```c
+// myconsole_device.h
+extern const OutputInterface myconsole_output_interface;
+```
+
+The GameCube interface declaration at `src/native/device/gamecube/gamecube_device.c:455` is the reference:
+
+```c
+const OutputInterface gamecube_output_interface = {
+    .name             = "GameCube",
+    .target           = OUTPUT_TARGET_GAMECUBE,
+    .init             = ngc_init,
+    .core1_task       = core1_task,
+    .task             = NULL,
+    .get_rumble       = gc_get_rumble,
+    .get_player_led   = gc_get_kb_led,
+    .get_profile_count   = gc_get_profile_count,
+    .get_active_profile  = gc_get_active_profile_index,
+    .set_active_profile  = gc_set_active_profile,
+    .get_profile_name    = gc_get_profile_name,
+    .get_trigger_threshold = gc_get_trigger_threshold,
+};
+```
+
+## Wiring into an app
+
+Add the interface to your app's `output_interfaces` array in `app.c`:
+
+```c
+#include "native/device/myconsole/myconsole_device.h"
+
+extern const OutputInterface myconsole_output_interface;
+
+static const OutputInterface* output_interfaces[] = {
+    &myconsole_output_interface,
+};
+
+const OutputInterface** app_get_output_interfaces(uint8_t* count)
+{
+    *count = sizeof(output_interfaces) / sizeof(output_interfaces[0]);
+    return output_interfaces;
+}
+```
+
+Then add the route in `app_init()`:
+
+```c
+router_add_route(INPUT_SOURCE_USB_HOST, OUTPUT_TARGET_MYCONSOLE, 0);
+```

@@ -1,0 +1,233 @@
+---
+title: "Data flow"
+description: "How a button press travels from a physical controller through input normalization, the router pipeline, profile application, and out to the console."
+---
+
+Data flows forward through the input path and backward through the rumble feedback path. Both paths are lock-free on the critical read/write operations.
+
+```
+  Controller          Input driver          Router            Output driver         Console
+  ──────────          ────────────          ──────            ─────────────         ───────
+
+  [Button press] --> [Normalize to    ] --> [Transform   ] --> [Read from    ] --> [Send to
+                      input_event_t]        Profile           router_outputs]      console]
+                                            Merge
+                                            Store
+
+  [Rumble motor] <-- [Send SET_REPORT] <-- [Player mgr  ] <-- [get_rumble() ] <-- [Console
+                                            feedback]                              command]
+```
+
+## Step 1: Input normalization
+
+Every input driver — whether USB HID, Bluetooth, SNES GPIO, or WiFi JOCP — converts raw controller data into a common `input_event_t` structure before touching the rest of the system.
+
+```c
+// src/core/input_event.h
+typedef struct {
+    // Device identification
+    uint8_t dev_addr;            // Device address (USB: 1-127, BT: conn_index, Native: port)
+    int8_t instance;             // Instance number (for multi-controller devices)
+    input_device_type_t type;    // INPUT_TYPE_GAMEPAD, MOUSE, KEYBOARD, etc.
+    input_transport_t transport; // INPUT_TRANSPORT_USB, BT_CLASSIC, BT_BLE, NATIVE, etc.
+    controller_layout_t layout;  // Physical button layout (for 6-button controllers)
+
+    // Digital inputs
+    uint32_t buttons;            // JP_BUTTON_* bitmap (W3C Gamepad API order)
+    uint32_t keys;               // Keyboard scancodes
+
+    // Absolute analog inputs — all normalized to 0-255
+    uint8_t analog[7];           // [0]=LX, [1]=LY, [2]=RX, [3]=RY,
+                                 // [4]=L2, [5]=R2, [6]=RZ
+                                 // Sticks centered at 128; triggers start at 0
+
+    // Relative inputs (mouse, spinner, trackball)
+    int8_t delta_x;              // Horizontal delta (-127 to +127)
+    int8_t delta_y;              // Vertical delta (-127 to +127)
+    int8_t delta_wheel;          // Scroll wheel delta
+} input_event_t;
+```
+
+Key normalization rules applied by every driver:
+
+- **Buttons** use W3C Gamepad API order (`JP_BUTTON_B1` through `JP_BUTTON_A1`). Bit position equals button index.
+- **Analog axes** are normalized to 0–255 with 128 as center. HID convention: 0 = up/left, 255 = down/right.
+- **Y-axis inversion**: Nintendo-style controllers (N64, GameCube) use inverted Y (0 = down, 255 = up). Input drivers invert this during normalization so the rest of the system always sees HID convention.
+
+## Step 2: Router submit
+
+The input driver calls `router_submit_input(&event)` to hand off the event. The router processes it through a five-stage inline pipeline — there is no queue, thread boundary, or copy on this path:
+
+<Steps>
+  <Step title="TRANSFORM">
+    Apply transform flags: mouse-to-analog conversion accumulates `delta_x`/`delta_y` into analog stick positions; `TRANSFORM_SPINNER` accumulates the X-axis for spinner inputs (Nuon, etc.); `TRANSFORM_MERGE_INSTANCES` merges multi-instance devices such as Joy-Con pairs. Controlled by `router_config_t.transform_flags`.
+  </Step>
+  <Step title="PROFILE">
+    Apply the active button remapping profile defined per-app in `profiles.h`. The profile maps input `JP_BUTTON_*` bits to output bits, optionally driving analog axes from buttons (e.g., LB → L2 analog full press).
+  </Step>
+  <Step title="MERGE">
+    Combine with other inputs targeting the same output slot based on the routing mode. In `MERGE_BLEND` mode, button states are OR'd and analog values use the value furthest from center.
+  </Step>
+  <Step title="STORE">
+    Write the final `input_event_t` to `router_outputs[target][slot]` as an atomic single-writer store from Core 0. Sets `updated = true` on the slot.
+  </Step>
+  <Step title="TAP">
+    Call any registered push callbacks for outputs that need immediate notification (UART bridge, BLE peripheral). An exclusive tap skips the STORE step to avoid the copy.
+  </Step>
+</Steps>
+
+The entire pipeline runs inline — `router_submit_input()` returns only after the event is stored and any callbacks have fired.
+
+## Step 3: Routing modes
+
+The routing mode determines how input devices map to output slots.
+
+<Tabs>
+  <Tab title="SIMPLE">
+    One controller per slot. Device N maps to player slot N. Default for console adapters. When controller 1 connects it gets slot 1; controller 2 gets slot 2; up to the output's player limit.
+
+    ```
+    Controller 0 --> Slot 0
+    Controller 1 --> Slot 1
+    Controller 2 --> Slot 2
+    ```
+  </Tab>
+  <Tab title="MERGE">
+    All controllers merge into a single output slot (slot 0). Used by `bt2usb` and copilot/accessibility setups. Button states are combined according to the configured merge sub-mode.
+
+    ```
+    Controller 0 --\
+    Controller 1 ---+--> Slot 0
+    Controller 2 --/
+    ```
+  </Tab>
+  <Tab title="BROADCAST">
+    Every input is sent to every active output target. Used for multi-output configurations where the same controller drives multiple consoles simultaneously.
+
+    ```
+    Controller 0 --> Slot 0 (GameCube)
+    Controller 0 --> Slot 0 (USB Device)
+    Controller 0 --> Slot 0 (BLE)
+    ```
+  </Tab>
+</Tabs>
+
+When multiple inputs target the same slot, the merge sub-mode determines how they combine:
+
+| Merge mode | Behavior |
+|------------|----------|
+| `MERGE_BLEND` | OR all button states. Sticks use the value furthest from center. Triggers use maximum value. |
+| `MERGE_PRIORITY` | The highest-priority input source wins on conflicts. |
+| `MERGE_ALL` | Most recent input overwrites the entire slot state. |
+
+## Step 4: Profile application
+
+Before an event reaches the output, the router applies the active button remapping profile. Profiles are defined per-app in `profiles.h` and support:
+
+- **1:1 remapping** — map B1 to B2, swap L and R triggers, etc.
+- **Button to multiple outputs** — one input press produces multiple output button bits.
+- **Button to analog axis** — a button press drives a specific analog axis value (e.g., LB forces L2 analog to 255).
+- **Analog sensitivity** — scale stick range with `left_stick_sensitivity` / `right_stick_sensitivity`.
+- **SOCD cleaning** — resolve simultaneous opposite cardinal directions for fighting game inputs.
+
+Users cycle profiles by holding SELECT + D-pad Up (next) or Down (previous) for 2 seconds. The NeoPixel LED flashes to confirm the change. The selected profile persists to flash so it survives power cycles.
+
+## Step 5: Output read
+
+Output drivers call `router_get_output(target, slot)` to read the latest state for their player slot:
+
+```c
+// Lock-free, zero-copy — returns pointer to internal router storage
+const input_event_t* router_get_output(output_target_t output, uint8_t player_id);
+```
+
+This returns a direct pointer to internal router storage — zero-copy, no mutex, no allocation. Console outputs running on Core 1 call this in their tight PIO loop. USB device outputs running on Core 0 call it in their periodic task. The read is lock-free because the router uses single-writer atomic stores: only Core 0 writes; reads are always consistent.
+
+## Step 6: Console protocol encoding
+
+The output driver translates the common format into the console's native protocol:
+
+- **GameCube**: Packs buttons and analog values into a joybus response frame, sent via PIO at 130 MHz. The `joybus.pio` program handles bit-precise timing.
+- **PCEngine**: Maps buttons into multiplexed select/clock scan lines via `plex.pio`, `clock.pio`, and `select.pio`.
+- **Dreamcast**: Builds a maple bus packet with button, analog, and trigger data via `maple.pio`.
+- **USB Device**: Fills an HID report descriptor matching the selected output mode (SInput, XInput, PS4, Switch, etc.).
+
+## Feedback path (rumble)
+
+Feedback flows backward through the system. When a console sends a rumble command:
+
+<Steps>
+  <Step title="Output driver receives the command">
+    For example, GameCube sends a rumble bit in its poll request. The output driver reads it and stores the motor state internally.
+  </Step>
+  <Step title="OutputInterface.get_rumble() returns the motor state">
+    The `OutputInterface` struct exposes `get_rumble()` which the player manager polls each loop iteration.
+  </Step>
+  <Step title="players_task() routes feedback to the correct device">
+    `players_task()` reads the rumble state for each player slot and routes it to the correct input device by `dev_addr` and `instance`.
+  </Step>
+  <Step title="Input driver sends to the physical controller">
+    The input driver sends the feedback command to the hardware: USB SET_REPORT for USB controllers, Bluetooth HID output report for BT controllers, or N64 rumble pak command for native controllers.
+  </Step>
+</Steps>
+
+This is how a DualSense controller vibrates when a GameCube game triggers rumble — the feedback crosses the entire stack in reverse.
+
+## Dual-core execution
+
+On RP2040, timing-critical work is split across two CPU cores:
+
+<Tabs>
+  <Tab title="Core 0 (main loop)">
+    ```c
+    while (1) {
+        // Services
+        leds_task();
+        players_task();
+        storage_task();
+
+        // Inputs (polling each interface in order)
+        for each input_interface -> task();
+
+        // Outputs (non-PIO work: USB HID reports, BLE, UART)
+        for each output_interface -> task();
+
+        app_task();
+    }
+    ```
+
+    Input polling runs *before* output tasks, so outputs always see the freshest data from the current loop iteration.
+  </Tab>
+  <Tab title="Core 1 (PIO loop)">
+    Core 1 runs the output's `core1_task()` — a tight PIO loop for console protocols. Only one output can claim Core 1.
+
+    Core 1 reads from the router (lock-free) and interacts with PIO state machines. It is never interrupted by USB or Bluetooth processing.
+  </Tab>
+</Tabs>
+
+## Latency design
+
+The architecture minimizes input-to-output latency through several deliberate choices:
+
+| Principle | Implementation |
+|-----------|----------------|
+| Input before output | Outputs read data from the current loop iteration, never the previous one. |
+| Zero-copy router | `router_get_output()` returns a pointer, not a copy. |
+| No mutexes on critical path | Single-writer atomic stores; lock-free reads from Core 1. |
+| No queuing | `router_submit_input()` processes inline. No event queue between layers. |
+| RAM placement | Timing-critical code uses `__not_in_flash_func` to avoid flash cache misses. |
+| Core isolation | Console PIO loops on Core 1 are never interrupted by USB or Bluetooth work. |
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Architecture overview" icon="layer-group" href="/architecture/overview">
+    The four-layer model and where each component lives.
+  </Card>
+  <Card title="Router" icon="route" href="/architecture/router">
+    Routing modes, merge behavior, and the full router API.
+  </Card>
+  <Card title="Button remapping profiles" icon="sliders" href="/architecture/profiles">
+    Profile structure, trigger behavior, and SOCD cleaning.
+  </Card>
+</CardGroup>

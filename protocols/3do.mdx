@@ -1,0 +1,223 @@
+---
+title: "3DO Protocol"
+description: "PBUS serial daisy-chain protocol for 3DO controller emulation. Supports up to 8 players, joypad, joystick, mouse, and arcade device types with native controller passthrough."
+---
+
+The 3DO output interface emulates 3DO controllers connected via the PBUS (Player Bus) daisy-chain protocol. It supports up to 8 players, multiple device types (joypad, joystick, mouse, arcade pad), and extension passthrough for native 3DO controllers.
+
+<Warning>
+  The RP2040 GPIO operates at 3.3V and is **not** 5V tolerant. Level shifters are required on all signal lines (CLK, DATA_OUT, DATA_IN, CS_CTRL). See the wiring section below.
+</Warning>
+
+## Protocol overview
+
+<CardGroup cols={2}>
+  <Card title="Wire protocol" icon="ethernet">
+    PBUS — clock-synchronized serial with daisy-chain architecture, MSB-first, active HIGH
+  </Card>
+  <Card title="PIO programs" icon="code">
+    `sampling.pio` (sm_sampling) and `output.pio` (sm_output), runs on Core 1
+  </Card>
+  <Card title="Field rate" icon="clock">
+    60Hz (NTSC) / 50Hz (PAL) — one scan per video field
+  </Card>
+  <Card title="Max players" icon="users">
+    8 via daisy chain (448 bits max per field)
+  </Card>
+</CardGroup>
+
+### How it works
+
+The 3DO console clocks data out of the controller chain serially. Each controller in the chain shifts its report bits, then relays the clock to the next device in line. The chain terminates with a string of zeros. Different device types transmit different numbers of bits per frame.
+
+```
+Console ──▶ Device #0 ──▶ 3DO Pad #1 ──▶ 3DO Pad #2
+        ◀──            ◀──             ◀──
+ CLK ──────────────────────────────────────────────▶
+```
+
+<Info>
+  Extension controllers (native 3DO pads) connected via the passthrough port appear at the end of the daisy chain with 1-frame latency due to passthrough buffering.
+</Info>
+
+## Recommended board
+
+The 3DO interface targets the **RP2040-Zero** (Waveshare), matching the pin assignments from FCare's [USBTo3DO](https://github.com/FCare/USBTo3DO) design.
+
+## GPIO pin assignments
+
+| Signal | GPIO | Description |
+|--------|------|-------------|
+| CLK | GP2 | Clock input from 3DO console |
+| DATA_OUT | GP3 | Data output to 3DO console |
+| DATA_IN | GP4 | Data input from next controller (daisy chain) |
+| CS_CTRL | GP5 | Chip Select / Control signal |
+
+## Level shifter wiring
+
+All signal lines require bidirectional 3.3V-to-5V level shifting. The recommended part is a 4-channel BSS138 bidirectional level shifter (BD-LCC), based on FCare's USBTo3DO design.
+
+| RP2040-Zero | BD-LCC (Low) | BD-LCC (High) | DB9-Female | DB9-Male |
+|-------------|--------------|---------------|------------|----------|
+| 5V | — | HV | — | — |
+| GND | G | G | — | — |
+| GPIO 2 | L1 | H1 | Pin 1 | Pin 1 |
+| GPIO 3 | L2 | H2 | Pin 2 | Pin 2 |
+| GPIO 4 | LV | HV | — | — |
+| GPIO 5 | G | G | Pin 6 | Pin 6 |
+| GPIO 6 | L3 | H3 | Pin 3 | Pin 3 |
+| GPIO 7 | L4 | H4 | Pin 4 | Pin 4 |
+| — | — | — | Pin 5 (5V) | Pin 5 |
+| — | — | — | Pin 9 (GND) | Pin 9 |
+
+- **DB9-Female**: Connects to the 3DO console
+- **DB9-Male**: Passthrough for daisy-chaining native controllers
+
+## Controller port pinout
+
+| Pin | Signal | Description |
+|-----|--------|-------------|
+| 1 | Clock | CLK from console |
+| 2 | Data Out | Data to console |
+| 3 | Data In | Data from next controller in chain |
+| 4 | Audio Left | Unused by adapter |
+| 5 | Audio Right | Unused by adapter |
+| 6 | VCC | +5V power |
+| 7 | GND | Ground |
+| 8 | Control Select | Chip select / control |
+
+## Player support
+
+- **Max players**: 8
+- **Assignment**: Automatic on connection
+- **Disconnect behavior**: SHIFT mode — remaining players move up to fill gaps
+- **Daisy chain**: USB controllers appear first; native 3DO controllers pass through the extension port
+
+## Device types
+
+| Type | Enum | Report size | ID |
+|------|------|-------------|-----|
+| Joypad | `CONTROLLER_JOYPAD` | 2 bytes (16 bits) | `0b100` (3-bit) |
+| Joystick | `CONTROLLER_JOYSTICK` | 9 bytes (72 bits) | `0x01 0x7B 0x08` |
+| Mouse | `CONTROLLER_MOUSE` | 4 bytes (32 bits) | `0x49` |
+| Silly Pad (arcade) | `CONTROLLER_SILLY` | 2 bytes (16 bits) | `0xC0` |
+
+Device type is self-identifying: each device transmits its ID code as the first byte of every report. Joypad detection uses the physical impossibility of pressing Up and Down simultaneously — any non-zero pattern in the upper two bits of the ID nibble identifies a joypad.
+
+## Button mapping
+
+### Joypad (standard controller)
+
+| JP_BUTTON_* | 3DO button | Notes |
+|-------------|------------|-------|
+| `JP_BUTTON_B1` | B | Middle button |
+| `JP_BUTTON_B2` | C | Bottom button |
+| `JP_BUTTON_B3` | A | Top button |
+| `JP_BUTTON_B4` | (disabled) | Not mapped in default profile |
+| `JP_BUTTON_L1` | L | Left shoulder |
+| `JP_BUTTON_L2` | L | Left shoulder (OR with L1) |
+| `JP_BUTTON_R1` | R | Right shoulder |
+| `JP_BUTTON_R2` | R | Right shoulder (OR with R1) |
+| `JP_BUTTON_S1` | X | Stop button |
+| `JP_BUTTON_S2` | P | Play/Pause |
+| `JP_BUTTON_DU/DD/DL/DR` | D-pad | Direct mapping |
+
+Left stick is also mapped to D-pad directions.
+
+### Joypad report format (16 bits)
+
+```c
+// Byte 0 (transmitted first, MSB first):
+// [A][Left][Right][Up][Down][ID2][ID1][ID0]
+
+// Byte 1:
+// [Tail1][Tail0][L][R][X][P][C][B]
+```
+
+<Note>
+  PBUS uses active-HIGH encoding (1 = pressed). This is the opposite of PCEngine. The driver handles this conversion internally.
+</Note>
+
+### Mouse
+
+| USB mouse | 3DO mouse |
+|-----------|-----------|
+| Left click | Left button |
+| Right click | Right button |
+| Middle click | Middle button |
+| Movement | Relative motion (10-bit signed X/Y deltas) |
+
+Mouse movement is encoded as 10-bit signed deltas split across nibbles in the 4-byte report.
+
+### Joystick (flight stick)
+
+4-axis analog support transmitted as 8-bit values (0–255) plus digital buttons including a FIRE trigger. Analog axes map to: X, Y, Z (twist), and throttle.
+
+## Output modes
+
+| Mode | Constant | Description |
+|------|----------|-------------|
+| Normal | `TDO_MODE_NORMAL` | Standard joypad/joystick output |
+| Silly | `TDO_MODE_SILLY` | Arcade JAMMA silly pad (Orbatak, etc.) |
+
+Toggle between modes via hotkey.
+
+## Extension passthrough
+
+| Mode | Constant | Description |
+|------|----------|-------------|
+| Passthrough | `TDO_EXT_PASSTHROUGH` | Relay extension data unchanged (default) |
+| Managed | `TDO_EXT_MANAGED` | Parse extension controllers through player system |
+
+## Profiles
+
+Profiles are defined in `src/apps/usb23do/profiles.h`:
+
+- **Default (SNES-style)**: A/B/C mapped for general play
+- **Fighting**: Optimized for Way of the Warrior, Street Fighter II
+- **Shooter**: Optimized for Doom, PO'ed
+
+Profile switching uses the standard Select + D-pad Up/Down mechanism (hold Select for 2 seconds). Profiles persist to flash.
+
+## Build commands
+
+<CodeGroup>
+
+```bash usb23do (RP2040-Zero)
+make usb23do_rp2040zero
+```
+
+```bash snes23do (RP2040-Zero)
+make snes23do_rp2040zero
+```
+
+</CodeGroup>
+
+Output: `releases/joypad_<commit>_<app>_rp2040zero.uf2`
+
+## Apps using this output
+
+| App | Description |
+|-----|-------------|
+| `usb23do` | USB/Bluetooth controllers to 3DO |
+| `snes23do` | SNES controllers to 3DO |
+
+## Common pitfalls
+
+<AccordionGroup>
+  <Accordion title="Active-HIGH encoding">
+    PBUS uses 1 = pressed, opposite of PCEngine (active LOW). Invert button values when porting logic between the two protocols.
+  </Accordion>
+  <Accordion title="Joypad is 2 bytes, not 1">
+    Each joypad transmits 16 bits. When parsing a PBUS stream, skip 2 bytes per joypad — not 1.
+  </Accordion>
+  <Accordion title="End-of-chain detection">
+    A single `0x00` byte is not the end of chain. Multiple consecutive zero bytes are required to mark the chain terminator.
+  </Accordion>
+  <Accordion title="Extension controller latency">
+    Extension controllers connected via the passthrough port have 1-frame (~16ms) latency due to passthrough buffering.
+  </Accordion>
+  <Accordion title="Buffer overflow">
+    The maximum PBUS field is 448 bits (56 bytes). Allocate output buffers with padding beyond this maximum.
+  </Accordion>
+</AccordionGroup>

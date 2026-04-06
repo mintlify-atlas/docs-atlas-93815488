@@ -1,24 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "Joypad OS",
+  "projectType": "general",
+  "projectName": "Joypad OS",
+  "projectDescription": "Open-source firmware platform for building game controller adapters and custom controllers on RP2040, ESP32-S3, and nRF52840 microcontrollers.",
   "theme": "aspen",
-  "colors": {
-    "primary": "#848c8f",
-    "light": "#182128",
-    "dark": "#c9cbcd"
-  },
-  "favicon": "https://media.brand.dev/9df86b7e-27ad-43d5-96d2-bd95b96b3b6e.png",
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/joypad-ai/joypad-os"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/joypad-ai/joypad-os"
-    }
-  },
+  "primaryColor": "#848c8f",
+  "lightColor": "#182128",
+  "darkColor": "#c9cbcd",
   "navigation": {
     "tabs": [
       {
@@ -105,5 +92,29 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "Universal controller protocol translation (USB HID, XInput, Bluetooth, WiFi, native)",
+    "Support for retro consoles: GameCube, PCEngine, Dreamcast, Nuon, 3DO, N64, and more",
+    "Multi-platform: RP2040, ESP32-S3, nRF52840 microcontrollers",
+    "Flexible routing: SIMPLE (1:1), MERGE (all-to-one), BROADCAST (one-to-all)",
+    "Button remapping profiles with in-field switching via SELECT + D-pad",
+    "Dual-core execution: Core 0 for input, Core 1 for timing-critical console protocols",
+    "PIO-based cycle-accurate timing for console output protocols",
+    "Custom controller support via GPIO and ADC inputs",
+    "Assistive gaming: merge multiple input devices into one output",
+    "Low-latency zero-copy router with lock-free reads"
+  ],
+  "publicApiSurface": [
+    "router_submit_input(input_event_t*) — submit normalized controller input to router",
+    "router_get_output(output_target, slot) — read latest state for an output slot",
+    "InputInterface — interface for implementing new input sources",
+    "OutputInterface — interface for implementing new output targets",
+    "input_event_t — unified input event structure (buttons bitmap + analog axes)",
+    "JP_BUTTON_* — button constants in W3C Gamepad API order",
+    "profile_t — button remapping profile table structure",
+    "app_init() / app_task() — app lifecycle hooks",
+    "platform_hal functions — platform_time_ms, platform_reboot, platform_get_serial",
+    "make <app>_<board> — build system entry point for firmware targets"
+  ]
 }

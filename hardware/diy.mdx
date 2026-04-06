@@ -1,0 +1,171 @@
+---
+title: "DIY builds"
+description: "What you need to build your own Joypad OS adapter — parts, tools, suppliers, and community resources."
+---
+
+Build your own controller adapter with a microcontroller board, a few components, and soldering iron. This page covers what you need, where to buy it, and guidance for different build types.
+
+## What you need
+
+<Steps>
+  <Step title="Choose a microcontroller board">
+    Pick a board based on your use case. The **Adafruit KB2040** is the default recommendation for console adapters. See [Supported Boards](/hardware/boards) for the full list.
+  </Step>
+  <Step title="Get a USB cable">
+    USB-C or Micro-USB depending on your board. Must be a data-capable cable — charge-only cables have no data lines and will not work.
+  </Step>
+  <Step title="Get the console connector">
+    Each console uses a different connector. Cut a controller extension cable to get the correct plug, or source a raw connector. See the [Wiring Guide](/hardware/wiring) for pinouts.
+  </Step>
+  <Step title="Get a USB-A breakout (most builds)">
+    Most builds need a USB-A female breakout board to accept USB controllers. The Feather RP2040 USB Host skips this step — it has a built-in USB-A port.
+  </Step>
+  <Step title="Wire and solder">
+    Connect board GPIO pins to the console connector and USB-A breakout using 22–26 AWG hookup wire. See the [Wiring Guide](/hardware/wiring) for pin assignments and diagrams.
+  </Step>
+  <Step title="Flash the firmware">
+    Download the correct `.uf2` from [Releases](https://github.com/joypad-ai/joypad-os/releases) or build from source. Hold BOOT while connecting USB to enter bootloader mode, then drag and drop the file.
+  </Step>
+</Steps>
+
+**Full parts list:**
+- Microcontroller board (see [Supported Boards](/hardware/boards))
+- USB cable (data-capable, USB-C or Micro-USB)
+- Console connector or extension cable (cut to expose wires)
+- USB-A female breakout board or cut USB-A extension cable
+- 22–26 AWG hookup wire
+- Soldering iron and solder
+
+Optional: level shifters, pullup resistors, capacitors (console-specific — see individual adapter docs).
+
+---
+
+## Build types
+
+<Tabs>
+  <Tab title="Console adapter">
+    **Use any USB or Bluetooth controller on a retro console.**
+
+    Example: `usb2gc_kb2040` — USB controllers to GameCube
+
+    **What you need:**
+    - Adafruit KB2040 (~$10)
+    - GameCube controller extension cable (cut)
+    - USB-A female breakout board
+    - Hookup wire, soldering iron
+
+    Wire the GameCube plug to GPIO 7 (data) and the USB-A breakout to GPIO 16/17. Flash the firmware for your target console. Full wiring diagram in the [usb2gc build guide](/hardware/wiring).
+
+    **Supported output consoles**: GameCube/Wii, PCEngine/TurboGrafx-16, Dreamcast, Nuon, 3DO, Neo Geo, Casio Loopy
+  </Tab>
+  <Tab title="USB passthrough">
+    **Bridge USB controllers to USB output — for remapping, protocol conversion, or wireless-to-wired.**
+
+    Example: `usb2usb_feather` — USB/BT controller to USB HID gamepad
+
+    **What you need (easiest option):**
+    - Adafruit Feather RP2040 USB Host (~$12) — has built-in USB-A host port, no wiring needed
+    - USB-C cable
+
+    Flash `usb2usb` firmware. Plug in a USB controller, plug the Feather into a PC. The controller appears as a USB HID gamepad with full button remapping via profiles.
+
+    For other RP2040 boards, wire a USB-A breakout to GPIO 16/17. See the [Wiring Guide](/hardware/wiring).
+  </Tab>
+  <Tab title="Bluetooth to USB">
+    **Convert Bluetooth controllers to wired USB — no soldering required.**
+
+    Example: `bt2usb_pico_w` — Bluetooth controller to USB gamepad
+
+    **What you need:**
+    - Raspberry Pi Pico W (~$6)
+    - Micro-USB data cable
+
+    That is it. The Pico W has built-in Classic Bluetooth and BLE. Flash the firmware, plug in, and pair your controller. See the [bt2usb Pico W build guide](/hardware/wiring).
+  </Tab>
+  <Tab title="Native controller adapter">
+    **Wire a retro controller directly to GPIO pins — no USB involved in the data path.**
+
+    Example: `snes2usb_kb2040` — SNES controller to USB
+
+    **What you need:**
+    - Adafruit KB2040 (~$10)
+    - SNES, N64, or GameCube extension cable (cut)
+    - Hookup wire, soldering iron
+
+    Wire the controller's clock, latch, and data lines to the designated GPIO pins. See the [Wiring Guide](/hardware/wiring) for SNES, N64, and GameCube pinouts.
+
+    **Supported native inputs**: SNES/NES, N64, GameCube, Neo Geo arcade stick, LodgeNet hotel controllers
+  </Tab>
+  <Tab title="Custom controller">
+    **Wire up your own buttons, sticks, and sensors to build a USB gamepad from scratch.**
+
+    Example: `controller_macropad` — Adafruit MacroPad to USB HID
+
+    **What you need:**
+    - Adafruit MacroPad RP2040 (~$30), or any RP2040 board with GPIO buttons
+    - Buttons, switches, or an analog stick module
+
+    Wire buttons to GPIO pins and configure the firmware for your layout. The MacroPad is a self-contained option with 12 mechanical switches and an OLED display already integrated.
+  </Tab>
+</Tabs>
+
+---
+
+## Common mistakes
+
+Avoid these before powering on your build:
+
+- **Reversed power polarity** — double-check + and − before connecting
+- **Wrong voltage** — most console data lines are 3.3V; applying 5V will damage the board
+- **Crossed data lines** — D+ and D- swapped on the USB host port will silently fail
+- **Cold solder joints** — resolder any joint that looks dull or grainy
+- **Missing pullup resistors** — some console protocols require pullups; check the adapter docs
+- **Wrong GPIO pins** — pin assignments differ between board variants; verify before flashing
+- **Charge-only USB cable** — must use a data-capable cable to flash and communicate
+
+---
+
+## Where to buy
+
+### Microcontroller boards
+
+| Store | What they carry |
+|-------|----------------|
+| [Adafruit](https://www.adafruit.com/) | KB2040, Feather RP2040 USB Host, MacroPad, Feather nRF52840 |
+| [Raspberry Pi](https://www.raspberrypi.com/) | Pico, Pico W, Pico 2 W |
+| [Waveshare](https://www.waveshare.com/) | RP2040-Zero |
+| [Seeed Studio](https://www.seeedstudio.com/) | XIAO ESP32-S3, XIAO nRF52840 |
+| [Pimoroni](https://shop.pimoroni.com/) | Various RP2040 boards |
+
+### Console connectors
+
+| Source | Notes |
+|--------|-------|
+| eBay | Replacement controller cables — cheapest option |
+| AliExpress | Bulk connectors for multiple builds |
+| [Console5](https://console5.com/) | Retro console parts |
+| Retro Game Cave | Specialty connectors |
+
+### Pre-built adapters
+
+If you prefer a ready-to-use product, the [Joypad Shop](https://joypad.ai/shop) sells finished adapters:
+
+- USB2PCE
+- USB2GC (GCUSB)
+- USB2Nuon (NUONUSB)
+- USB23DO
+
+---
+
+## Community resources
+
+<CardGroup cols={2}>
+  <Card title="Discord" icon="discord" href="http://community.joypad.ai/">
+    Share your build, get wiring help, and see what others have made.
+  </Card>
+  <Card title="GitHub Issues" icon="github" href="https://github.com/joypad-ai/joypad-os/issues">
+    Report bugs, request controller support, or follow development.
+  </Card>
+</CardGroup>
+
+Build questions are best asked on Discord — include your board, firmware version, and a photo of your wiring.

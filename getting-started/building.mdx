@@ -1,0 +1,339 @@
+---
+title: "Building from source"
+description: "Set up a development environment and compile Joypad OS firmware for RP2040, ESP32-S3, or nRF52840."
+---
+
+## Quick start (RP2040, macOS)
+
+```bash
+# 1. Install the ARM toolchain (one-time)
+brew install --cask gcc-arm-embedded cmake git
+
+# 2. Clone and initialize submodules
+git clone https://github.com/joypad-ai/joypad-os.git
+cd joypad-os
+make init
+
+# 3. Build an app
+make usb2gc_kb2040      # USB/BT → GameCube
+make usb2pce_kb2040     # USB/BT → PCEngine
+make usb2usb_feather_rp2040  # USB/BT → USB HID
+make bt2usb_pico_w      # Bluetooth → USB
+make snes2usb_kb2040    # SNES controller → USB
+```
+
+Output: `releases/joypad_<commit>_<app>_<board>.uf2`
+
+## Prerequisites
+
+<Tabs>
+  <Tab title="macOS">
+    <Steps>
+      <Step title="Install the ARM GCC toolchain">
+        Install the official ARM-distributed toolchain via Homebrew Cask:
+
+        ```bash
+        brew install --cask gcc-arm-embedded
+        ```
+
+        This installs to `/Applications/ArmGNUToolchain/<version>/arm-none-eabi/`.
+
+        <Warning>
+          Do **not** use `brew install arm-none-eabi-gcc`. That formula is missing newlib and the build will fail.
+        </Warning>
+      </Step>
+      <Step title="Install CMake and Git">
+        ```bash
+        brew install cmake git
+        ```
+
+        CMake 3.13 or later is required.
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="Linux">
+    Install all required packages with apt:
+
+    ```bash
+    sudo apt update
+    sudo apt install cmake gcc-arm-none-eabi libnewlib-arm-none-eabi \
+                     build-essential git python3
+    ```
+  </Tab>
+  <Tab title="Windows">
+    <Tabs>
+      <Tab title="Chocolatey (native)">
+        <Steps>
+          <Step title="Install Chocolatey">
+            Open PowerShell as Administrator and follow the instructions at [chocolatey.org/install](https://chocolatey.org/install).
+          </Step>
+          <Step title="Install required tools">
+            ```powershell
+            choco install make gcc-arm-embedded git
+            ```
+          </Step>
+          <Step title="Add Git Unix tools to PATH">
+            ```powershell
+            [Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\Program Files\Git\usr\bin", "User")
+            ```
+
+            Close and reopen PowerShell after running this command.
+          </Step>
+          <Step title="Set the ARM toolchain path">
+            Find the toolchain installation path:
+
+            ```powershell
+            Get-ChildItem "C:\Program Files (x86)" -Filter "arm-none-eabi-gcc.exe" -Recurse -ErrorAction SilentlyContinue
+            ```
+
+            Set `PICO_TOOLCHAIN_PATH` to the `bin` folder (adjust the version number):
+
+            ```powershell
+            [Environment]::SetEnvironmentVariable("PICO_TOOLCHAIN_PATH", "C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\[version]\bin", "User")
+            ```
+
+            Close and reopen PowerShell.
+          </Step>
+          <Step title="Verify and build">
+            ```powershell
+            make --version
+            arm-none-eabi-gcc --version
+            rm --version
+            ```
+
+            Then clone and build:
+
+            ```powershell
+            git clone https://github.com/joypad-ai/joypad-os.git
+            cd joypad-os
+            make init
+            make usb2gc_kb2040
+            ```
+          </Step>
+        </Steps>
+      </Tab>
+      <Tab title="MSYS2">
+        <Steps>
+          <Step title="Install MSYS2">
+            Download and install MSYS2 from [msys2.org](https://www.msys2.org/). Open the **MSYS2 MINGW64** terminal.
+          </Step>
+          <Step title="Install tools">
+            ```bash
+            pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake mingw-w64-x86_64-make git
+            ```
+          </Step>
+          <Step title="Build">
+            Follow the standard build instructions above.
+          </Step>
+        </Steps>
+      </Tab>
+      <Tab title="WSL2">
+        Use WSL2 with Ubuntu and follow the Linux instructions. WSL2 is the recommended option for Windows users who want the smoothest experience.
+      </Tab>
+    </Tabs>
+  </Tab>
+</Tabs>
+
+## Building apps
+
+Build targets follow the pattern `make <app>_<board>`. Run `make help` to list all available targets.
+
+### Console adapter apps
+
+Convert USB or Bluetooth controllers to retro console output:
+
+```bash
+make usb2pce_kb2040         # USB/BT → PCEngine / TurboGrafx-16
+make usb2gc_kb2040          # USB/BT → GameCube / Wii
+make usb2nuon_kb2040        # USB/BT → Nuon DVD players
+make usb23do_rp2040zero     # USB/BT → 3DO
+make usb2dc_kb2040          # USB/BT → Sega Dreamcast
+make usb2neogeo_kb2040      # USB/BT → Neo Geo / SuperGun
+make usb2loopy_kb2040       # USB/BT → Casio Loopy (experimental)
+make snes23do_rp2040zero    # SNES controller → 3DO
+```
+
+### USB output apps
+
+Convert USB or Bluetooth input to USB HID gamepad output:
+
+```bash
+make usb2usb_pico                           # USB/BT → USB HID (Pi Pico)
+make usb2usb_feather_rp2040                 # USB/BT → USB HID (Feather RP2040)
+make usb2usb_rp2040zero                     # USB/BT → USB HID (RP2040-Zero)
+make snes2usb_kb2040                        # SNES controller → USB HID
+make n642usb_kb2040                         # N64 controller → USB HID
+make gc2usb_kb2040                          # GameCube controller → USB HID
+```
+
+### Custom controller apps
+
+Build custom controllers from GPIO and analog inputs:
+
+```bash
+make controller_fisherprice_v1_kb2040       # GPIO buttons → USB HID
+make controller_fisherprice_v2_kb2040       # GPIO + analog stick → USB HID
+make controller_alpakka_pico                # Alpakka controller (Pico)
+make controller_macropad                    # MacroPad RP2040 → USB HID
+```
+
+### Build all
+
+```bash
+make all        # Build all RP2040 apps
+make releases   # Build stable release apps only
+make clean      # Clean build artifacts
+```
+
+## App reference
+
+### Console adapters
+
+| App | Board | Input | Output | Description |
+|-----|-------|-------|--------|-------------|
+| `usb2pce_kb2040` | KB2040 | USB/BT | PCEngine | 5-player multitap, mouse support |
+| `usb2gc_kb2040` | KB2040 | USB/BT | GameCube | Profiles, rumble, keyboard mode |
+| `usb2nuon_kb2040` | KB2040 | USB/BT | Nuon | Spinner, in-game reset |
+| `usb23do_rp2040zero` | RP2040-Zero | USB/BT | 3DO | 8-player daisy chain, mouse |
+| `usb2dc_kb2040` | KB2040 | USB/BT | Dreamcast | Rumble, analog triggers, 4 players |
+| `usb2neogeo_kb2040` | KB2040 | USB/BT | Neo Geo | 7 profiles, 1L6B arcade layouts |
+| `usb2loopy_kb2040` | KB2040 | USB/BT | Loopy | 4 players (experimental) |
+| `snes23do_rp2040zero` | RP2040-Zero | SNES | 3DO | Native SNES controller input |
+
+### USB output
+
+| App | Board | Input | Output | Description |
+|-----|-------|-------|--------|-------------|
+| `usb2usb_feather_rp2040` | Feather RP2040 | USB/BT | USB HID | USB gamepad passthrough |
+| `usb2usb_rp2040zero` | RP2040-Zero | USB/BT | USB HID | Compact USB passthrough |
+| `snes2usb_kb2040` | KB2040 | SNES | USB HID | SNES to USB adapter |
+| `n642usb_kb2040` | KB2040 | N64 | USB HID | N64 to USB adapter |
+| `gc2usb_kb2040` | KB2040 | GameCube | USB HID | GameCube to USB adapter |
+
+### Custom controllers
+
+| App | Board | Input | Output | Description |
+|-----|-------|-------|--------|-------------|
+| `controller_fisherprice_v1_kb2040` | KB2040 | GPIO | USB HID | Digital buttons only |
+| `controller_fisherprice_v2_kb2040` | KB2040 | GPIO + ADC | USB HID | With analog stick |
+| `controller_alpakka_pico` | Pico | GPIO / I2C | USB HID | Alpakka design |
+| `controller_macropad` | MacroPad RP2040 | 12 keys | USB HID | Macro keypad |
+
+### Supported boards
+
+| Board | ID | USB host | Notes |
+|-------|----|----------|-------|
+| Adafruit KB2040 | `kb2040` | Yes | Default for most apps |
+| Raspberry Pi Pico | `pico` | Yes | Standard RP2040 |
+| Raspberry Pi Pico W | `pico_w` | Yes | Classic BT + BLE via CYW43 |
+| Waveshare RP2040-Zero | `rp2040zero` | Yes | Compact form factor |
+| Adafruit Feather RP2040 USB Host | `feather_usbhost` | Yes | Built-in USB-A port |
+| Adafruit MacroPad RP2040 | `macropad` | No | 12 keys + rotary encoder |
+
+## ESP32-S3 builds
+
+ESP32-S3 builds require ESP-IDF v6.0+ separately from the ARM toolchain.
+
+<Steps>
+  <Step title="Install ESP-IDF (one-time)">
+    ```bash
+    make init-esp
+    ```
+
+    This clones ESP-IDF v6.0 to `~/esp-idf` and installs the ESP32-S3 toolchain.
+  </Step>
+  <Step title="Build">
+    ```bash
+    make bt2usb_xiao_esp32s3          # Build for Seeed XIAO ESP32-S3
+    make bt2usb_feather_esp32s3       # Build for Adafruit Feather ESP32-S3
+    ```
+  </Step>
+  <Step title="Flash">
+    ```bash
+    make flash-bt2usb_xiao_esp32s3   # Flash via esptool
+    # Or use UF2 drag-and-drop:
+    make uf2-bt2usb_xiao_esp32s3     # Generate .uf2
+    make flash-uf2-bt2usb_xiao_esp32s3  # Copy to TinyUF2 drive
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  ESP32-S3 supports BLE only — no Classic Bluetooth. Only BLE controllers will work with these builds.
+</Note>
+
+## nRF52840 builds
+
+nRF52840 builds require nRF Connect SDK v3.1.0+ separately from the ARM toolchain.
+
+<Steps>
+  <Step title="Install nRF Connect SDK (one-time)">
+    ```bash
+    make init-nrf
+    ```
+  </Step>
+  <Step title="Build">
+    ```bash
+    make bt2usb_seeed_xiao_nrf52840       # Seeed XIAO nRF52840
+    make bt2usb_adafruit_feather_nrf52840 # Adafruit Feather nRF52840
+    ```
+  </Step>
+  <Step title="Flash">
+    ```bash
+    make flash-bt2usb_seeed_xiao_nrf52840     # Flash via UF2 bootloader
+    make flash-bt2usb_feather_nrf52840        # Flash Feather via UF2
+    ```
+  </Step>
+  <Step title="Monitor serial output">
+    ```bash
+    make monitor-bt2usb_seeed_xiao_nrf52840   # UART serial monitor
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  nRF52840 supports BLE only — same as ESP32-S3. Debug output uses UART, not USB CDC.
+</Note>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="macOS: `nosys.specs: No such file or directory`">
+    You're using the wrong toolchain. The Homebrew formula `arm-none-eabi-gcc` is missing newlib. Switch to the official ARM cask:
+
+    ```bash
+    brew uninstall arm-none-eabi-gcc
+    brew install --cask gcc-arm-embedded
+    ```
+  </Accordion>
+  <Accordion title="Build fails with SDK errors">
+    Re-initialize submodules and rebuild:
+
+    ```bash
+    make clean
+    make init
+    make <target>
+    ```
+  </Accordion>
+  <Accordion title="Windows: `PICO_TOOLCHAIN_PATH not set`">
+    Ensure the environment variable points to the `bin` folder that contains `arm-none-eabi-gcc.exe`. Close and reopen PowerShell after setting it.
+  </Accordion>
+  <Accordion title="Windows: `rm: command not found`">
+    Ensure `C:\Program Files\Git\usr\bin` is in your `PATH`. Close and reopen PowerShell after updating the variable.
+  </Accordion>
+  <Accordion title="Board doesn't enumerate after flashing">
+    - Verify you flashed the correct firmware for your board
+    - Check that the USB cable supports data (not charge-only)
+    - Try a different USB port
+  </Accordion>
+  <Accordion title="Controllers not detected">
+    - Check the [controller compatibility list](/hardware/controllers)
+    - If using a USB hub, ensure it is powered
+    - Try connecting the controller directly without a hub
+  </Accordion>
+</AccordionGroup>
+
+## Getting help
+
+- **GitHub Issues**: [github.com/joypad-ai/joypad-os/issues](https://github.com/joypad-ai/joypad-os/issues) — bug reports
+- **Discord**: [community.joypad.ai](http://community.joypad.ai/) — community support

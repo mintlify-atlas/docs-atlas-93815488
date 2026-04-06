@@ -1,97 +1,75 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Joypad OS"
+description: "Open-source firmware platform for game controller adapters and custom controllers — running on RP2040, ESP32-S3, and nRF52840."
 ---
 
-## Setting up
+Joypad OS is firmware that runs on small microcontroller boards. Flash it onto a chip and it handles everything: reading controllers, translating protocols, routing inputs to outputs, and managing button remapping. Use any modern USB or Bluetooth controller on retro consoles, or build your own custom controller from scratch.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Flash Your Adapter" icon="bolt" href="/getting-started/installation">
+    Download firmware and flash your adapter in minutes — no build tools required.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Build from Source" icon="hammer" href="/getting-started/building">
+    Set up a development environment and build firmware for any supported board.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Console Adapters" icon="gamepad" href="/adapters/console-adapters">
+    Use modern controllers on GameCube, PCEngine, Dreamcast, 3DO, Nuon, and more.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Hardware Guide" icon="microchip" href="/hardware/boards">
+    Choose the right microcontroller board for your project.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What you can build
 
-Everything you need to create world-class documentation.
+<CardGroup cols={2}>
+  <Card title="Console Adapters" icon="plug" href="/adapters/console-adapters">
+    Connect USB or Bluetooth controllers to retro consoles like GameCube, PCEngine, Dreamcast, Nuon, and 3DO.
+  </Card>
+  <Card title="USB & Bluetooth Adapters" icon="bluetooth" href="/adapters/usb-bluetooth-adapters">
+    Turn any Bluetooth controller into a wired USB gamepad, or bridge WiFi controllers to USB.
+  </Card>
+  <Card title="Native Input Adapters" icon="arrow-right-arrow-left" href="/adapters/native-input-adapters">
+    Convert retro controllers (SNES, N64, GameCube) to USB or bridge them to other consoles.
+  </Card>
+  <Card title="Custom Controllers" icon="sliders" href="/adapters/custom-controllers">
+    Wire up GPIO buttons and analog sticks to build a USB gamepad from scratch.
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## How it works
 
-## Need inspiration?
+Joypad OS normalizes every input source into a common format, routes it through configurable player slots, and translates it into the output protocol the target needs — from retro console protocols via PIO to modern USB HID and XInput.
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+```
+Any Input                Router              Any Output
+─────────                ──────              ──────────
+USB controllers ──┐                          ┌──→ Retro consoles
+Bluetooth ────────┤  normalize → route   ───┼──→ USB gamepad
+WiFi ─────────────┼──→  → translate ────────┼──→ XInput / PS4 / Switch
+SNES / N64 / GC ──┤         ↓               ├──→ Keyboard + mouse
+GPIO buttons ─────┘    profile_apply()       └──→ Custom outputs
+```
+
+<CardGroup cols={2}>
+  <Card title="Architecture Overview" icon="sitemap" href="/architecture/overview">
+    Understand the four-layer model: Apps, Input, Core, and Output.
+  </Card>
+  <Card title="Data Flow" icon="arrow-right" href="/architecture/data-flow">
+    Follow a button press from controller to console — step by step.
+  </Card>
+  <Card title="Developer Guide" icon="code" href="/development/overview">
+    Add new drivers, apps, input sources, or output targets.
+  </Card>
+  <Card title="Supported Platforms" icon="server" href="/platforms/rp2040">
+    RP2040, ESP32-S3, and nRF52840 platform documentation.
+  </Card>
+</CardGroup>
+
+## Supported consoles and controllers
+
+**Output consoles**: GameCube/Wii, PCEngine/TurboGrafx-16, Dreamcast, Nuon, 3DO, N64, Casio Loopy, Neo Geo, NES
+
+**Input controllers**: Xbox (OG, 360, One, Series X|S), PlayStation (DS3, DS4, DualSense), Nintendo Switch Pro, Joy-Con, 8BitDo, Logitech, Hori, Google Stadia, and generic USB HID gamepads
+
+**Platforms**: RP2040 (Adafruit KB2040, Raspberry Pi Pico/W, Waveshare RP2040-Zero), ESP32-S3 (XIAO ESP32-S3), nRF52840 (Seeed XIAO, Adafruit Feather)

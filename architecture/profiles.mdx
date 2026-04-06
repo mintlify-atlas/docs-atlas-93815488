@@ -1,0 +1,393 @@
+---
+title: "Button remapping profiles"
+description: "Per-app profile tables that remap buttons, configure trigger behavior, and apply SOCD cleaning. Users cycle profiles at runtime; selections persist to flash."
+---
+
+The profile system provides button remapping, analog tuning, and trigger configuration. Apps define profiles as static arrays in `profiles.h`; users cycle between them at runtime without reflashing. Each player can have an independent active profile.
+
+Source: `src/core/services/profiles/profile.h` and `profile.c`
+
+## What a profile is
+
+A `profile_t` struct contains:
+
+```c
+// src/core/services/profiles/profile.h
+
+typedef struct {
+    // Identity
+    const char* name;           // Short name (e.g., "default", "ssbm")
+    const char* description;    // Human-readable description
+
+    // Button mappings (sparse — only non-default mappings needed)
+    // Buttons not in this list pass through unchanged (input == output)
+    const button_map_entry_t* button_map;
+    uint8_t button_map_count;
+
+    // Button combos (multiple buttons -> output)
+    // Checked before individual mappings
+    const button_combo_entry_t* combo_map;
+    uint8_t combo_map_count;
+
+    // Trigger configuration
+    trigger_behavior_t l2_behavior;
+    trigger_behavior_t r2_behavior;
+    uint8_t l2_threshold;       // Analog threshold for digital activation (0-255)
+    uint8_t r2_threshold;
+    uint8_t l2_analog_value;    // Custom analog value for TRIGGER_LIGHT_PRESS
+    uint8_t r2_analog_value;
+
+    // Analog stick settings
+    float left_stick_sensitivity;   // 0.0-1.0 (1.0 = 100%)
+    float right_stick_sensitivity;  // 0.0-1.0 (0.0 = disabled)
+
+    // Button-triggered stick sensitivity modifiers
+    const stick_modifier_t* left_stick_modifiers;
+    uint8_t left_stick_modifier_count;
+    const stick_modifier_t* right_stick_modifiers;
+    uint8_t right_stick_modifier_count;
+
+    // SOCD handling for D-pad
+    socd_mode_t socd_mode;
+
+} profile_t;
+```
+
+Apps without a `profiles.h` pass all buttons through unchanged.
+
+## Button mapping types
+
+### Simple remap
+
+Map one input button to a different output button:
+
+```c
+MAP_BUTTON(JP_BUTTON_B1, JP_BUTTON_B2)  // A outputs as B
+```
+
+### Multi-button output
+
+Map one input to multiple output buttons simultaneously:
+
+```c
+MAP_BUTTON_MULTI(JP_BUTTON_R1, JP_BUTTON_L2, JP_BUTTON_R2)  // RB outputs as L2+R2
+```
+
+### Button to analog axis
+
+Map a button press to a specific analog axis value:
+
+```c
+// LB outputs GC L digital + L2 analog forced to 255
+MAP_BUTTON_ANALOG(JP_BUTTON_L1, GC_BUTTON_L, ANALOG_TARGET_L2_FULL, 0)
+
+// D-Up drives right stick up (no digital button output)
+MAP_ANALOG_ONLY(JP_BUTTON_DU, ANALOG_TARGET_RY_MIN)
+```
+
+### Disable a button
+
+Suppress a button entirely — it produces no output:
+
+```c
+MAP_DISABLED(JP_BUTTON_A1)  // Guide button does nothing
+```
+
+### Button combos
+
+Map multiple simultaneous buttons to a single output:
+
+```c
+// L1+R1 together = Guide button (consume the inputs)
+MAP_COMBO(JP_BUTTON_L1 | JP_BUTTON_R1, JP_BUTTON_A1)
+
+// A+B = X, but ONLY if exactly A+B are pressed (no other buttons)
+MAP_COMBO_EXCLUSIVE(JP_BUTTON_B1 | JP_BUTTON_B2, JP_BUTTON_B3)
+```
+
+Combos are evaluated before individual button mappings. If `consume_inputs` is true, the input buttons are removed from the output when the combo fires.
+
+### Stick modifiers
+
+Reduce stick sensitivity when a button is held:
+
+```c
+STICK_MODIFIER(JP_BUTTON_L3, 0.5f)  // Hold L3 = 50% stick sensitivity
+```
+
+## Trigger behavior
+
+Each trigger (L2/R2) is configured independently:
+
+| Mode | Description |
+|------|-------------|
+| `TRIGGER_PASSTHROUGH` | Analog value passed through; digital activates at threshold. |
+| `TRIGGER_DIGITAL_ONLY` | Digital button only, no analog output. |
+| `TRIGGER_FULL_PRESS` | Digital + analog forced to 255. |
+| `TRIGGER_LIGHT_PRESS` | Analog capped at `l2/r2_analog_value`; no digital activation. |
+| `TRIGGER_INSTANT` | Digital activates at threshold = 1 (hair trigger). |
+| `TRIGGER_DISABLED` | No output. |
+
+<Note>
+Controllers without analog triggers (SNES, Neo Geo) synthesize analog values in `profile_apply()` so trigger threshold logic works uniformly across all controller types.
+</Note>
+
+## SOCD cleaning
+
+For fighting game controllers (Hitbox, arcade sticks) where opposite directions can be held simultaneously:
+
+| Mode | Up + Down | Left + Right |
+|------|-----------|--------------|
+| `SOCD_PASSTHROUGH` | Both output | Both output |
+| `SOCD_NEUTRAL` | Cancel (neutral) | Cancel (neutral) |
+| `SOCD_UP_PRIORITY` | Up wins | Cancel (neutral) |
+| `SOCD_LAST_WIN` | Last input wins | Last input wins |
+
+## Profile cycling UX
+
+<Steps>
+  <Step title="Hold SELECT + D-pad Up for 2 seconds">
+    Advances to the next profile in the array. SELECT and D-pad are suppressed from the output while the combo is held.
+  </Step>
+  <Step title="Hold SELECT + D-pad Down for 2 seconds">
+    Returns to the previous profile.
+  </Step>
+  <Step title="LED confirms the change">
+    The NeoPixel LED flashes OFF pulses: the number of pulses equals the new profile index + 1.
+  </Step>
+  <Step title="Rumble confirms the change">
+    If the controller supports rumble, it fires a short haptic pulse as confirmation.
+  </Step>
+</Steps>
+
+Each player can independently cycle profiles using the same combo on their own controller. SELECT + D-pad Left/Right can switch USB output modes when an output mode callback is registered.
+
+## Profile persistence
+
+```c
+// Save active profile index to flash (debounced — 5-second delay)
+void profile_save_to_flash(output_target_t output);
+
+// Restore profile index at boot
+uint8_t profile_load_from_flash(output_target_t output, uint8_t default_index);
+```
+
+The 5-second write debounce prevents excessive flash wear from rapid cycling. Profile selections survive power cycles.
+
+## Applying profiles in output drivers
+
+Output drivers call `profile_apply()` to transform an input event through the active profile:
+
+```c
+// src/core/services/profiles/profile.h
+
+profile_output_t output;
+const profile_t* profile = profile_get_active(OUTPUT_TARGET_GAMECUBE);
+profile_apply(profile,
+              event->buttons,
+              event->analog[ANALOG_LX], event->analog[ANALOG_LY],
+              event->analog[ANALOG_RX], event->analog[ANALOG_RY],
+              event->analog[ANALOG_L2], event->analog[ANALOG_R2],
+              event->analog[ANALOG_RZ],
+              &output);
+```
+
+The `profile_output_t` contains remapped buttons, analog values with override flags, and passthrough motion/pressure data. For simple button-only mapping, use `profile_apply_button_map()`.
+
+## Defining profiles in apps
+
+Apps define profiles in `src/apps/<appname>/profiles.h`. Below are the five profiles from `src/apps/usb2gc/profiles.h`:
+
+<AccordionGroup>
+  <Accordion title="Default — standard GameCube layout">
+    Maps modern controllers to GameCube naturally. Cross/B → GC B, Circle/A → GC A, Square/X → GC Y, Triangle/Y → GC X, RB → Z. Analog triggers pass through; L1 (LB) is disabled (GameCube has no equivalent).
+
+    ```c
+    static const button_map_entry_t gc_default_map[] = {
+        MAP_BUTTON(JP_BUTTON_B1, GC_BUTTON_B),     // Cross/B → GC B
+        MAP_BUTTON(JP_BUTTON_B2, GC_BUTTON_A),     // Circle/A → GC A
+        MAP_BUTTON(JP_BUTTON_B3, GC_BUTTON_Y),     // Square/X → GC Y
+        MAP_BUTTON(JP_BUTTON_B4, GC_BUTTON_X),     // Triangle/Y → GC X
+        MAP_BUTTON(JP_BUTTON_R1, GC_BUTTON_Z),     // RB → Z
+        MAP_DISABLED(JP_BUTTON_L1),                 // LB → nothing
+        MAP_BUTTON(JP_BUTTON_S2, GC_BUTTON_START),
+        MAP_DISABLED(JP_BUTTON_S1),                 // Select → profile switch only
+    };
+
+    static const profile_t gc_profile_default = {
+        .name = "default",
+        .description = "Standard mapping matching GameCube layout",
+        .button_map = gc_default_map,
+        .button_map_count = sizeof(gc_default_map) / sizeof(gc_default_map[0]),
+        .l2_behavior = TRIGGER_PASSTHROUGH,
+        .r2_behavior = TRIGGER_PASSTHROUGH,
+        .l2_threshold = 250,
+        .r2_threshold = 250,
+        .left_stick_sensitivity = 1.0f,
+        .right_stick_sensitivity = 1.0f,
+        .socd_mode = SOCD_PASSTHROUGH,
+    };
+    ```
+  </Accordion>
+  <Accordion title="SNES — original SNES controller mapping">
+    LB/RB become full analog trigger presses (for games that require hard L/R). SELECT routes to Z.
+
+    ```c
+    static const button_map_entry_t gc_snes_map[] = {
+        MAP_BUTTON(JP_BUTTON_B1, GC_BUTTON_B),
+        MAP_BUTTON(JP_BUTTON_B2, GC_BUTTON_A),
+        MAP_BUTTON(JP_BUTTON_B3, GC_BUTTON_Y),
+        MAP_BUTTON(JP_BUTTON_B4, GC_BUTTON_X),
+        MAP_BUTTON_ANALOG(JP_BUTTON_L1, GC_BUTTON_L, ANALOG_TARGET_L2_FULL, 0),
+        MAP_BUTTON_ANALOG(JP_BUTTON_R1, GC_BUTTON_R, ANALOG_TARGET_R2_FULL, 0),
+        MAP_BUTTON(JP_BUTTON_S1, GC_BUTTON_Z),     // Select → Z
+        MAP_BUTTON(JP_BUTTON_S2, GC_BUTTON_START),
+    };
+    ```
+  </Accordion>
+  <Accordion title="SSBM — Super Smash Bros. Melee competitive">
+    LB → Z, RB → X (short hop aerials), L3 hold → 50% stick sensitivity (walk), left stick at 85% range, light shield via `TRIGGER_LIGHT_PRESS` at analog value 43 (~17%), neutral SOCD.
+
+    ```c
+    static const button_map_entry_t gc_ssbm_map[] = {
+        MAP_BUTTON(JP_BUTTON_B1, GC_BUTTON_B),
+        MAP_BUTTON(JP_BUTTON_B2, GC_BUTTON_A),
+        MAP_BUTTON(JP_BUTTON_B3, GC_BUTTON_Y),
+        MAP_BUTTON(JP_BUTTON_B4, GC_BUTTON_X),
+        MAP_BUTTON(JP_BUTTON_L1, GC_BUTTON_Z),     // LB → Z
+        MAP_BUTTON(JP_BUTTON_R1, GC_BUTTON_X),     // RB → X (short hop)
+        MAP_DISABLED(JP_BUTTON_S1),
+        MAP_BUTTON(JP_BUTTON_S2, GC_BUTTON_START),
+    };
+
+    static const stick_modifier_t gc_ssbm_left_modifiers[] = {
+        STICK_MODIFIER(JP_BUTTON_L3, 0.50f),       // Hold L3 = walk
+    };
+
+    static const profile_t gc_profile_ssbm = {
+        .name = "ssbm",
+        .description = "SSBM: LB→Z, L3→walk, 85% stick",
+        .button_map = gc_ssbm_map,
+        .button_map_count = sizeof(gc_ssbm_map) / sizeof(gc_ssbm_map[0]),
+        .l2_behavior = TRIGGER_LIGHT_PRESS,   // Light shield
+        .r2_behavior = TRIGGER_FULL_PRESS,
+        .l2_threshold = 0,
+        .r2_threshold = 140,
+        .l2_analog_value = 43,                // ~17% light shield
+        .left_stick_sensitivity = 0.85f,
+        .right_stick_sensitivity = 1.0f,
+        .left_stick_modifiers = gc_ssbm_left_modifiers,
+        .left_stick_modifier_count = 1,
+        .socd_mode = SOCD_NEUTRAL,
+    };
+    ```
+  </Accordion>
+  <Accordion title="Mario Kart Wii — drift optimized">
+    LB → D-pad Up (wheelies/tricks), RB → R with full analog, RT is instant (threshold = 10).
+
+    ```c
+    static const button_map_entry_t gc_mkwii_map[] = {
+        MAP_BUTTON(JP_BUTTON_B1, GC_BUTTON_B),
+        MAP_BUTTON(JP_BUTTON_B2, GC_BUTTON_A),
+        MAP_BUTTON(JP_BUTTON_B3, GC_BUTTON_Y),
+        MAP_BUTTON(JP_BUTTON_B4, GC_BUTTON_X),
+        MAP_BUTTON(JP_BUTTON_L1, GC_BUTTON_DU),                              // LB → D-Up
+        MAP_BUTTON_ANALOG(JP_BUTTON_R1, GC_BUTTON_R, ANALOG_TARGET_R2_FULL, 0),
+        MAP_DISABLED(JP_BUTTON_S1),
+        MAP_BUTTON(JP_BUTTON_S2, GC_BUTTON_START),
+    };
+
+    static const profile_t gc_profile_mkwii = {
+        .name = "mkwii",
+        .description = "MKWii: RB→R(full), RT→Z(instant), LB→DUp",
+        .button_map = gc_mkwii_map,
+        .button_map_count = sizeof(gc_mkwii_map) / sizeof(gc_mkwii_map[0]),
+        .l2_behavior = TRIGGER_PASSTHROUGH,
+        .r2_behavior = TRIGGER_INSTANT,       // Hair trigger for Z
+        .r2_threshold = 10,
+        .socd_mode = SOCD_PASSTHROUGH,
+    };
+    ```
+  </Accordion>
+  <Accordion title="Fighting games">
+    L1 drives C-stick Up (for in-game input config / macros), R1 → Z, right stick disabled, Hitbox-style SOCD.
+
+    ```c
+    static const button_map_entry_t gc_fighting_map[] = {
+        MAP_BUTTON(JP_BUTTON_B1, GC_BUTTON_B),
+        MAP_BUTTON(JP_BUTTON_B2, GC_BUTTON_A),
+        MAP_BUTTON(JP_BUTTON_B3, GC_BUTTON_Y),
+        MAP_BUTTON(JP_BUTTON_B4, GC_BUTTON_X),
+        MAP_ANALOG_ONLY(JP_BUTTON_L1, ANALOG_TARGET_RY_MAX), // L1 → C-stick Up
+        MAP_BUTTON(JP_BUTTON_R1, GC_BUTTON_Z),
+        MAP_DISABLED(JP_BUTTON_S1),
+        MAP_BUTTON(JP_BUTTON_S2, GC_BUTTON_START),
+    };
+
+    static const profile_t gc_profile_fighting = {
+        .name = "fighting",
+        .description = "Fighting: L1→C-Up, right stick disabled",
+        .button_map = gc_fighting_map,
+        .button_map_count = sizeof(gc_fighting_map) / sizeof(gc_fighting_map[0]),
+        .right_stick_sensitivity = 0.0f,      // Right stick disabled
+        .socd_mode = SOCD_UP_PRIORITY,         // Hitbox-style SOCD
+    };
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Defining a profile set
+
+After defining individual profiles, group them into a `profile_set_t` and register it at init:
+
+```c
+// src/apps/usb2gc/profiles.h
+
+static const profile_t gc_profiles[] = {
+    gc_profile_default,
+    gc_profile_snes,
+    gc_profile_ssbm,
+    gc_profile_mkwii,
+    gc_profile_fighting,
+};
+
+static const profile_set_t gc_profile_set = {
+    .profiles = gc_profiles,
+    .profile_count = sizeof(gc_profiles) / sizeof(gc_profiles[0]),
+    .default_index = 0,
+};
+```
+
+Then in `app.c`:
+
+```c
+profile_config_t profile_cfg = {0};
+profile_cfg.output_profiles[OUTPUT_TARGET_GAMECUBE] = &gc_profile_set;
+profile_init(&profile_cfg);
+```
+
+## Per-player profiles
+
+Each player can hold an independent profile index. Use the per-player API when the app supports multiple simultaneous players:
+
+```c
+// Get the active profile for player 2
+const profile_t* p = profile_get_active_for_player(OUTPUT_TARGET_GAMECUBE, 2);
+
+// Cycle player 2 to the next profile (with LED + rumble feedback)
+profile_cycle_player_next(OUTPUT_TARGET_GAMECUBE, 2);
+
+// Check if player 1 is holding the switch combo
+profile_check_player_switch_combo(1, event->buttons);
+```
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Data flow" icon="arrow-right" href="/architecture/data-flow">
+    Where profile application fits in the full input-to-output pipeline.
+  </Card>
+  <Card title="Router" icon="route" href="/architecture/router">
+    How the router calls profile_apply() before storing output state.
+  </Card>
+</CardGroup>

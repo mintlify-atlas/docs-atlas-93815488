@@ -1,0 +1,221 @@
+---
+title: "Supported boards"
+description: "Microcontroller boards supported by Joypad OS — RP2040, ESP32-S3, and nRF52840."
+---
+
+Joypad OS runs on RP2040, ESP32-S3, and nRF52840 microcontrollers. The right board depends on what you're building: console adapters, Bluetooth bridges, or compact embedded builds.
+
+## RP2040 boards
+
+### Adafruit KB2040
+
+**Recommended for most builds.**
+
+<CardGroup cols={2}>
+  <Card title="Form factor" icon="microchip">
+    Pro Micro compatible — 1.3" × 0.7"
+  </Card>
+  <Card title="Purchase" icon="cart-shopping" href="https://www.adafruit.com/product/5302">
+    Adafruit — ~$10
+  </Card>
+</CardGroup>
+
+**Features**: USB-C, 21 GPIO pins, boot button, WS2812 RGB LED
+
+**Recommended apps**: USB2PCE, USB2GC, USB2Nuon, USB2DC, USB2Loopy, USB2Neo
+
+The KB2040 is the default board for most console adapters. It uses a USB-C connector, has a built-in RGB LED for status indication, and fits the Pro Micro footprint used in existing adapter designs.
+
+<Tip>
+  The built-in RGB LED doubles as a status indicator — solid colors for connected controllers, patterns for boot and pairing states.
+</Tip>
+
+---
+
+### Raspberry Pi Pico / Pico W / Pico 2 W
+
+<CardGroup cols={2}>
+  <Card title="Form factor" icon="microchip">
+    Unique Pico layout — 2.1" × 0.8"
+  </Card>
+  <Card title="Purchase" icon="cart-shopping" href="https://www.raspberrypi.com/products/raspberry-pi-pico/">
+    Raspberry Pi — from $4
+  </Card>
+</CardGroup>
+
+**Features**: Micro-USB (Pico) or USB-C (Pico 2 W), 26 GPIO pins, boot button
+
+**Recommended apps**: All console adapters; `bt2usb` and `wifi2usb` on Pico W / Pico 2 W
+
+| Variant | USB | Bluetooth | WiFi | Price |
+|---------|-----|-----------|------|-------|
+| Pico | Micro-USB | No | No | ~$4 |
+| Pico W | Micro-USB | Classic BT + BLE | Yes | ~$6 |
+| Pico 2 W | USB-C | Classic BT + BLE | Yes | ~$7 |
+
+The **Pico W** and **Pico 2 W** have built-in Classic Bluetooth and BLE — no dongle needed for wireless controllers or WiFi apps.
+
+---
+
+### Adafruit Feather RP2040 USB Host
+
+<CardGroup cols={2}>
+  <Card title="Form factor" icon="microchip">
+    Feather — 2.0" × 0.9"
+  </Card>
+  <Card title="Purchase" icon="cart-shopping" href="https://www.adafruit.com/product/5723">
+    Adafruit — ~$12
+  </Card>
+</CardGroup>
+
+**Features**: USB-C (device) + USB-A (host), 21 GPIO pins, boot button, RGB LED
+
+**Recommended apps**: `usb2usb` (USB passthrough)
+
+The Feather RP2040 USB Host has a built-in USB-A host port — no wiring or breakout board needed. Use it for USB passthrough applications and USB-to-USB conversion without soldering.
+
+<Note>
+  This is the only RP2040 board with a built-in USB-A port. All other RP2040 boards require wiring a USB-A connector to GPIO pins for controller input. See the [Wiring Guide](/hardware/wiring).
+</Note>
+
+---
+
+### Waveshare RP2040-Zero
+
+<CardGroup cols={2}>
+  <Card title="Form factor" icon="microchip">
+    Ultra-compact — 0.9" × 0.7"
+  </Card>
+  <Card title="Purchase" icon="cart-shopping" href="https://www.waveshare.com/rp2040-zero.htm">
+    Waveshare — ~$6
+  </Card>
+</CardGroup>
+
+**Features**: USB-C, 20 GPIO pins, boot/reset buttons, WS2812 RGB LED, castellated edges
+
+**Recommended apps**: USB23DO, USB2DC, USB2Neo, `usb2usb`
+
+The RP2040-Zero is the smallest RP2040 board. Castellated edges make it suitable for embedding directly into PCBs. USB host pins are at GPIO 10 and 11 (different from Pico/KB2040).
+
+---
+
+### Adafruit MacroPad RP2040
+
+<CardGroup cols={2}>
+  <Card title="Form factor" icon="microchip">
+    MacroPad — 3.4" × 2.8"
+  </Card>
+  <Card title="Purchase" icon="cart-shopping" href="https://www.adafruit.com/product/5128">
+    Adafruit — ~$30
+  </Card>
+</CardGroup>
+
+**Features**: 12 mechanical key switches, rotary encoder, OLED display, per-key RGB LEDs
+
+**Recommended apps**: `controller_macropad`
+
+Use the MacroPad as a custom USB gamepad — a stream deck alternative, fighting game button box, or fully-configurable macro controller.
+
+---
+
+## ESP32-S3 boards
+
+### Seeed XIAO ESP32-S3
+
+<CardGroup cols={2}>
+  <Card title="Form factor" icon="microchip">
+    Ultra-compact — 0.84" × 0.70"
+  </Card>
+  <Card title="Purchase" icon="cart-shopping" href="https://www.seeedstudio.com/XIAO-ESP32S3-p-5627.html">
+    Seeed Studio
+  </Card>
+</CardGroup>
+
+**Features**: USB-C, BLE, WiFi, 11 GPIO pins, boot button, user LED (GPIO 21, active low)
+
+**Recommended apps**: `bt2usb` (BLE to USB adapter)
+
+<Warning>
+  The XIAO ESP32-S3 supports **BLE only** — no Classic Bluetooth. Classic BT controllers such as DualShock 3, DualShock 4, DualSense, Switch Pro, and Wii U Pro Controller are not supported. Use the Pico W or a USB Bluetooth dongle for those.
+</Warning>
+
+Requires ESP-IDF to build. See the [ESP32-S3 platform docs](/platforms/esp32).
+
+---
+
+## nRF52840 boards
+
+### Seeed XIAO nRF52840
+
+<CardGroup cols={2}>
+  <Card title="Form factor" icon="microchip">
+    Ultra-compact — 0.84" × 0.70"
+  </Card>
+  <Card title="Purchase" icon="cart-shopping" href="https://www.seeedstudio.com/Seeed-XIAO-BLE-nRF52840-p-5201.html">
+    Seeed Studio
+  </Card>
+</CardGroup>
+
+**Features**: USB-C, BLE, 11 GPIO pins, user LED, IMU, microphone
+
+**Recommended apps**: `bt2usb`, `usb2usb` (with MAX3421E FeatherWing)
+
+BLE only. UF2 bootloader for drag-and-drop flashing. Requires nRF Connect SDK to build. See the [nRF52840 platform docs](/platforms/nrf52840).
+
+---
+
+### Adafruit Feather nRF52840 Express
+
+<CardGroup cols={2}>
+  <Card title="Form factor" icon="microchip">
+    Feather — 2.0" × 0.9"
+  </Card>
+  <Card title="Purchase" icon="cart-shopping" href="https://www.adafruit.com/product/4062">
+    Adafruit — ~$25
+  </Card>
+</CardGroup>
+
+**Features**: USB-C, BLE, 21 GPIO pins, LiPo charging, RGB LED
+
+**Recommended apps**: `bt2usb`, `usb2usb` (with MAX3421E FeatherWing)
+
+Compatible with Feather-format accessories including FeatherWings. BLE only. UF2 bootloader for drag-and-drop flashing. Requires nRF Connect SDK to build.
+
+---
+
+## Board comparison
+
+### RP2040
+
+| Board | USB | GPIO | LED | Size | Cost | Best for |
+|-------|-----|------|-----|------|------|----------|
+| KB2040 | USB-C | 21 | RGB | Medium | $10 | **General use (recommended)** |
+| Pico | Micro-USB | 26 | No | Large | $4 | Budget builds |
+| Pico W | Micro-USB | 26 | No | Large | $6 | Bluetooth/WiFi (built-in) |
+| Feather USB Host | USB-C + USB-A | 21 | RGB | Medium | $12 | USB passthrough |
+| MacroPad | USB-C | 12 keys | RGB | Large | $30 | Custom controllers |
+| RP2040-Zero | USB-C | 20 | RGB | Smallest | $6 | Compact/embedded |
+
+### Cross-platform
+
+| Platform | Board | Bluetooth | WiFi | USB host | Best for |
+|----------|-------|-----------|------|----------|----------|
+| RP2040 | KB2040 | Via dongle | No | PIO-USB | Console adapters |
+| RP2040 | Pico W | Classic BT + BLE | Yes | PIO-USB | BT/WiFi adapters |
+| ESP32-S3 | XIAO ESP32-S3 | BLE only | Yes | No | Compact BLE adapter |
+| nRF52840 | XIAO nRF52840 | BLE only | No | Via MAX3421E | Compact BLE adapter |
+| nRF52840 | Feather nRF52840 | BLE only | No | Via MAX3421E | BLE + USB host |
+
+---
+
+## Power requirements
+
+RP2040 boards draw roughly 50–100 mA. Controllers vary from 50 mA (simple D-pads) to 500 mA (Xbox with rumble).
+
+| Setup | Recommendation |
+|-------|---------------|
+| 1–2 controllers | Bus-powered USB hub is fine; no external power needed |
+| 3+ controllers | Use a powered USB hub, especially with rumble |
+| High-power devices (Xbox rumble, RGB peripherals) | Powered USB hub required |
+
+A USB 2.0 port provides 500 mA maximum. Running multiple rumble controllers or RGB gaming peripherals on a passive hub will cause brownouts.

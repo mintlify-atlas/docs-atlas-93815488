@@ -1,0 +1,262 @@
+---
+title: "Router"
+description: "The central data plane of Joypad Core. Routes normalized input_event_t events from input drivers to output slots with an inline five-stage pipeline — no queues, no threads, no copies on the hot path."
+---
+
+The router is the central data plane of Joypad Core. It receives `input_event_t` events from input drivers, applies transforms and profiles, and stores the result for output drivers to read. All routing runs inline on Core 0 — there are no queues, threads, or copies on the hot path.
+
+Source: `src/core/router/router.c` and `router.h`
+
+## The input_event_t struct
+
+Every input driver submits events using this unified structure:
+
+```c
+typedef struct {
+    // Device identification
+    uint8_t dev_addr;            // Device address (USB: 1-127, BT: conn_index, Native: port)
+    int8_t instance;             // Instance number (for multi-controller devices)
+    input_device_type_t type;    // Device type classification
+    input_transport_t transport; // Connection type (USB, BT, native)
+    controller_layout_t layout;  // Physical button layout (for 6-button controllers)
+
+    // Digital inputs
+    uint32_t buttons;            // Button bitmap (JP_BUTTON_* defines)
+    uint32_t keys;               // Keyboard keys (modifier + scancodes)
+
+    // Absolute analog inputs (0-255, centered at 128 for sticks, 0 for triggers)
+    uint8_t analog[ANALOG_COUNT]; // Standard analog axes (see analog_axis_index_t)
+
+    // Relative inputs (mouse, spinner, trackball)
+    int8_t delta_x;              // Horizontal delta (-127 to +127)
+    int8_t delta_y;              // Vertical delta (-127 to +127)
+    int8_t delta_wheel;          // Scroll wheel delta
+
+    // Hat switches / D-pad alternatives (encoded as 8-direction)
+    uint8_t hat[4];              // 0-7 = direction, 0xFF = centered
+
+    // Motion data (SIXAXIS/DualShock/DualSense)
+    int16_t accel[3];            // Accelerometer X, Y, Z
+    int16_t gyro[3];             // Gyroscope X, Y, Z
+    bool has_motion;             // Motion data is valid
+
+    // Pressure-sensitive button data (DS3)
+    uint8_t pressure[12];        // 0x00 = released, 0xFF = fully pressed
+    bool has_pressure;
+
+    // Touchpad (DS4/DualSense)
+    struct { uint16_t x; uint16_t y; bool active; } touch[2];
+    bool has_touch;
+
+    // Battery level
+    uint8_t battery_level;       // 0-100 percent
+    bool battery_charging;
+} input_event_t;
+```
+
+Use `init_input_event()` to zero-initialize an event with safe defaults (sticks centered at 128, triggers at 0, hats at 0xFF).
+
+## Routing modes
+
+The router supports four modes, selected at init via `router_config_t.mode`:
+
+<Tabs>
+  <Tab title="SIMPLE (1:1)">
+    Each controller maps to its own player slot. Controller N goes to output slot N. Used by most console adapters: `usb2pce`, `usb2dc`, `snes2usb`.
+
+    ```
+    Controller 0 --> Slot 0
+    Controller 1 --> Slot 1
+    Controller 2 --> Slot 2
+    ```
+
+    Use SIMPLE when the target console has fixed hardware ports and each physical controller should map to a distinct player position.
+  </Tab>
+  <Tab title="MERGE (N:1)">
+    All controllers merge into a single output slot (slot 0). Used by `usb2gc` (all USB inputs feed one GC port) and `bt2usb` (all BT controllers feed one USB gamepad).
+
+    ```
+    Controller 0 --\
+    Controller 1 ---+--> Slot 0
+    Controller 2 --/
+    ```
+
+    How inputs combine depends on the [merge mode](#merge-modes). Use MERGE for copilot setups, accessibility configurations, or when a single console port must accept input from any connected controller.
+  </Tab>
+  <Tab title="BROADCAST (1:N)">
+    Every input goes to every active output target. Used by multi-output apps where the same controller drives multiple consoles simultaneously.
+
+    ```
+    Controller 0 --> Slot 0 (GameCube)
+    Controller 0 --> Slot 0 (USB Device)
+    Controller 0 --> Slot 0 (BLE)
+    ```
+
+    Use BROADCAST when one physical controller must simultaneously drive multiple output protocols.
+  </Tab>
+  <Tab title="CONFIGURABLE (N:M)">
+    User-defined routing table. Each route entry maps an input source to an output target with optional filters (device address, instance, target player). Routes are matched at runtime via `router_find_routes()`.
+
+    Use CONFIGURABLE for the universal adapter app or any scenario requiring explicit, per-device control over where input goes.
+  </Tab>
+</Tabs>
+
+## Merge modes
+
+When multiple inputs target the same slot, the merge mode determines how they combine:
+
+| Mode | Behavior | Typical use |
+|------|----------|-------------|
+| `MERGE_BLEND` | OR all button states together; sticks use the value furthest from center; triggers use max | Default for `usb2gc` — two players can both contribute to a single GC controller |
+| `MERGE_PRIORITY` | Higher-priority input wins; lower-priority sources only update when no higher-priority source is active | Composite adapters, e.g., USB input takes priority over SNES fallback |
+| `MERGE_ALL` | Most recent input overwrites the entire output state; last-writer-wins | Simple copilot or hot-swap scenarios |
+
+### BLEND detail
+
+For each output slot, the router tracks every contributing device in a `blend_device_state_t` array and re-blends on every update:
+
+- **Buttons**: OR together (any controller pressing A = A pressed)
+- **Sticks**: Value furthest from center (128)
+- **Triggers**: Maximum value
+- **Mouse deltas**: Accumulated, then cleared per-device to prevent re-adding
+- **Motion/Pressure/Touch**: First device that reports data wins
+
+## The five-stage inline pipeline
+
+Every call to `router_submit_input()` passes the event through five stages in sequence, all on Core 0:
+
+<Steps>
+  <Step title="TRANSFORM">
+    If `transform_flags` is set, the event is copied and `apply_transformations()` is called. When no transforms are enabled, the original event pointer is used directly (zero-copy).
+
+    | Flag | Description |
+    |------|-------------|
+    | `TRANSFORM_MOUSE_TO_ANALOG` | Accumulate mouse `delta_x`/`delta_y` into analog stick positions |
+    | `TRANSFORM_MERGE_INSTANCES` | Merge multi-instance devices (e.g., Joy-Con Grip left + right) |
+    | `TRANSFORM_SPINNER` | Accumulate X-axis deltas for spinner input (Nuon, etc.) |
+
+    **Mouse-to-analog detail:** Per-player accumulators track position. Configure the target axes and drain rate in `router_config_t`:
+    - `mouse_target_x` / `mouse_target_y`: Which analog axis to write (`ANALOG_LX`, `ANALOG_RX`, or `MOUSE_AXIS_DISABLED`)
+    - `mouse_drain_rate`: How fast accumulated position drains back to center each frame (0 = hold position)
+    - Values clamped to [-127, 127] then mapped to [1, 255] (centered at 128)
+  </Step>
+  <Step title="PROFILE">
+    Profile remapping is applied by output drivers after retrieval via `profile_apply()`, not inline in the router. The router passes the event through as-is at this stage.
+  </Step>
+  <Step title="MERGE">
+    If the routing mode is MERGE, the event is dispatched to the configured merge sub-mode (BLEND, PRIORITY, or ALL) and combined into slot 0.
+  </Step>
+  <Step title="STORE">
+    Unless this output has an exclusive tap registered, the final event is written to `router_outputs[output][player_index]` and `updated` is set to `true`. This is a single struct write — atomic at the word level on RP2040 Cortex-M0+.
+  </Step>
+  <Step title="TAP">
+    If a tap callback is registered for this output, it is called with the final event. Exclusive taps skip the STORE step entirely to avoid the copy.
+  </Step>
+</Steps>
+
+## Key API
+
+### Submitting input
+
+```c
+// Called by input drivers when a new report arrives.
+// This is the ONLY function input drivers should call.
+void router_submit_input(const input_event_t* event);
+```
+
+### Retrieving output
+
+```c
+// Get latest input state for this output + player.
+// Lock-free, zero-copy (returns pointer to internal state).
+// Returns NULL if the slot has not been updated.
+const input_event_t* router_get_output(output_target_t output, uint8_t player_id);
+
+// Fast scan: are any player slots updated for this output?
+bool router_has_updates(output_target_t output);
+
+// How many player slots are occupied for this output?
+uint8_t router_get_player_count(output_target_t output);
+```
+
+### Output taps
+
+For push-based outputs (UART, BLE) that do not poll `router_get_output()`:
+
+```c
+// Standard tap: event stored to router_outputs AND callback called.
+router_set_tap(OUTPUT_TARGET_UART, my_uart_callback);
+
+// Exclusive tap: callback called, router_outputs NOT written (avoids copy).
+router_set_tap_exclusive(OUTPUT_TARGET_BLE_PERIPHERAL, my_ble_callback);
+```
+
+The tap callback signature:
+
+```c
+typedef void (*router_tap_callback_t)(output_target_t output, uint8_t player_index,
+                                      const input_event_t* event);
+```
+
+## Routing table
+
+The routing table holds up to `MAX_ROUTES` (32) entries. Each `route_entry_t` specifies:
+
+| Field | Description |
+|-------|-------------|
+| `input` | Input source enum (`INPUT_SOURCE_USB_HOST`, `INPUT_SOURCE_BLE_CENTRAL`, `INPUT_SOURCE_NATIVE_SNES`, etc.) |
+| `output` | Output target enum (`OUTPUT_TARGET_GAMECUBE`, `OUTPUT_TARGET_PCENGINE`, `OUTPUT_TARGET_USB_DEVICE`, etc.) |
+| `priority` | Route priority (0 = highest) |
+| `input_dev_addr` | Filter by device address (0 = wildcard) |
+| `input_instance` | Filter by instance (-1 = wildcard) |
+| `output_player_id` | Target player slot (0xFF = auto-assign) |
+
+Add routes at init time:
+
+```c
+router_add_route(INPUT_SOURCE_USB_HOST, OUTPUT_TARGET_GAMECUBE, 0);
+```
+
+## Lock-free design
+
+The router is intentionally single-producer / single-consumer:
+
+- **Core 0** calls `router_submit_input()` and writes `router_outputs[]`
+- **Core 1** calls `router_get_output()` and reads `router_outputs[]`
+
+On RP2040 Cortex-M0+, `input_event_t` writes are aligned struct copies. The `volatile bool updated` flag provides the visibility boundary. No mutex or spinlock is needed on the hot path.
+
+On ESP32-S3 and nRF52840, both input processing and output polling run in the same RTOS task, so there is no cross-core contention at all.
+
+## Device disconnect
+
+When a device disconnects, call `router_device_disconnected()` before removing the player from the player manager. This clears the device's output state and removes it from blend tracking:
+
+```c
+router_device_disconnected(dev_addr, instance);
+remove_players_by_address(dev_addr, instance);
+```
+
+## Configuration example
+
+From `usb2gc/app.c`:
+
+```c
+router_config_t router_cfg = {
+    .mode = ROUTING_MODE_MERGE,
+    .merge_mode = MERGE_BLEND,
+    .transform_flags = TRANSFORM_MOUSE_TO_ANALOG,
+    .mouse_drain_rate = 8,
+    .mouse_target_x = ANALOG_LX,
+    .mouse_target_y = ANALOG_LY,
+};
+router_cfg.max_players_per_output[OUTPUT_TARGET_GAMECUBE] = 4;
+router_init(&router_cfg);
+router_add_route(INPUT_SOURCE_USB_HOST, OUTPUT_TARGET_GAMECUBE, 0);
+```
+
+## See also
+
+- [Button Constants](/core/buttons) — `JP_BUTTON_*` constants the router passes through
+- [Player Management](/core/players) — Player slot assignment the router delegates to
+- [Storage](/core/storage) — Flash persistence for settings

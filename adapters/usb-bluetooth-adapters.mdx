@@ -1,0 +1,204 @@
+---
+title: "USB & Bluetooth adapters"
+description: "Convert USB and Bluetooth controllers to USB HID output — including usb2usb, bt2usb, and wifi2usb apps."
+---
+
+These apps accept modern USB or Bluetooth controllers as input and output as a standard USB gamepad (or other USB device mode) that works with any PC, Mac, console, or Raspberry Pi. They are the most flexible apps in Joypad OS — they don't target a specific retro console and instead focus on cross-platform USB output.
+
+## App overview
+
+| App | Input | Routing | Output | Boards |
+|-----|-------|---------|--------|--------|
+| `usb2usb` | USB + Bluetooth | MERGE | USB HID (13 modes) | RP2040, nRF52840 |
+| `bt2usb` | Bluetooth only | MERGE | USB HID (13 modes) | Pico W, Pico 2 W, ESP32-S3, nRF52840 |
+| `wifi2usb` | WiFi JOCP | MERGE | USB HID (13 modes) | Pico W, Pico 2 W |
+
+---
+
+## usb2usb
+
+Translates any supported USB or Bluetooth controller into a standard USB gamepad. Supports 13 USB output modes that can be switched at runtime. Includes a web-based configuration interface at [config.joypad.ai](https://config.joypad.ai) for mode switching, profile management, input monitoring, and firmware updates.
+
+### What it does
+
+- Accepts USB HID, XInput, and Bluetooth controllers simultaneously
+- Merges up to 4 controllers into a single USB output (copilot/assistive mode)
+- Maps USB mouse X/Y to the right analog stick
+- Forwards rumble, player LEDs, and PS4 lightbar RGB back to the input controller
+- Supports Xbox 360 console authentication (XSM3) in XInput mode
+
+### USB output modes
+
+Double-click the board button to cycle modes. Triple-click to reset to SInput.
+
+**Runtime cycle order:** SInput → XInput → PS3 → PS4 → Switch → Keyboard/Mouse
+
+Additional modes available via [config.joypad.ai](https://config.joypad.ai): PS Classic, Xbox Original, Xbox One, Xbox Adaptive Controller, Wii U GC Adapter, Generic HID.
+
+<Note>
+XInput mode authenticates with real Xbox 360 consoles via XSM3. The selected output mode is saved to flash.
+</Note>
+
+### Supported boards
+
+| Board | Build command |
+|-------|---------------|
+| Raspberry Pi Pico | `make usb2usb_pico` |
+| Raspberry Pi Pico W | `make usb2usb_pico_w` |
+| Raspberry Pi Pico 2 W | `make usb2usb_pico2_w` |
+| Adafruit Feather RP2040 | `make usb2usb_feather_rp2040` |
+| Adafruit Feather RP2040 USB Host | `make usb2usb_feather_rp2040_usb_host` |
+| Waveshare RP2040-Zero | `make usb2usb_rp2040zero` |
+| Waveshare RP2350A | `make usb2usb_rp2350usba` |
+| Adafruit Feather ESP32-S3 | `make usb2usb_feather_esp32s3` |
+| Adafruit Feather nRF52840 | `make usb2usb_feather_nrf52840` |
+
+### Build and flash
+
+```bash
+make usb2usb_feather_rp2040
+make flash-usb2usb_feather_rp2040
+```
+
+---
+
+## bt2usb
+
+Bluetooth-only variant of `usb2usb`. Pairs Bluetooth controllers and outputs as a standard USB gamepad. No USB host port needed. Supports the same 13 USB output modes and web configuration as `usb2usb`.
+
+### What it does
+
+- Pairs up to 4 Bluetooth controllers simultaneously
+- Merges all connected controllers into a single USB output
+- Auto-scans for controllers on boot
+- Same USB output modes as `usb2usb`
+
+### Bluetooth support by platform
+
+<Tabs>
+  <Tab title="Pico W / Pico 2 W">
+    Uses the CYW43 wireless module for **Classic Bluetooth + BLE**.
+
+    Supports: DualSense, DualShock 3/4, Xbox One/Series (BT), Switch Pro, Switch 2 Pro, Joy-Con, 8BitDo, and other HID controllers.
+  </Tab>
+  <Tab title="ESP32-S3">
+    **BLE only** — no Classic Bluetooth.
+
+    Supports: Xbox Series BLE, 8BitDo BLE, Switch 2 Pro BLE, generic BLE HID controllers.
+  </Tab>
+  <Tab title="nRF52840">
+    **BLE only** — no Classic Bluetooth.
+
+    Supports: Xbox Series BLE, 8BitDo BLE, Switch 2 Pro BLE, generic BLE HID controllers.
+  </Tab>
+</Tabs>
+
+### Supported boards
+
+| Board | Platform | BT type | Build command |
+|-------|----------|---------|---------------|
+| Raspberry Pi Pico W | RP2040 | Classic + BLE | `make bt2usb_pico_w` |
+| Raspberry Pi Pico 2 W | RP2350 | Classic + BLE | `make bt2usb_pico2_w` |
+| XIAO ESP32-S3 | ESP32-S3 | BLE only | `make bt2usb_xiao_esp32s3` |
+| Feather ESP32-S3 | ESP32-S3 | BLE only | `make bt2usb_feather_esp32s3` |
+| XIAO nRF52840 | nRF52840 | BLE only | `make bt2usb_seeed_xiao_nrf52840` |
+| Feather nRF52840 | nRF52840 | BLE only | `make bt2usb_feather_nrf52840` |
+
+### Build and flash
+
+<Tabs>
+  <Tab title="Pico W (RP2040)">
+    ```bash
+    make bt2usb_pico_w
+    make flash-bt2usb_pico_w
+    ```
+  </Tab>
+  <Tab title="ESP32-S3">
+    Requires ESP-IDF setup (`make init-esp`):
+
+    ```bash
+    make bt2usb_xiao_esp32s3
+    make flash-bt2usb_xiao_esp32s3
+    ```
+  </Tab>
+  <Tab title="nRF52840">
+    Requires nRF Connect SDK setup (`make init-nrf`):
+
+    ```bash
+    make bt2usb_seeed_xiao_nrf52840
+    make flash-bt2usb_seeed_xiao_nrf52840
+    ```
+  </Tab>
+</Tabs>
+
+### Firmware filenames
+
+| Board | Firmware filename |
+|-------|-------------------|
+| Pico W | `joypad_*_bt2usb_pico_w.uf2` |
+| Pico 2 W | `joypad_*_bt2usb_pico2_w.uf2` |
+| XIAO ESP32-S3 | `joypad_*_bt2usb_esp32s3.uf2` |
+| XIAO nRF52840 | `joypad_*_bt2usb_seeed_xiao_nrf52840.uf2` |
+| Feather nRF52840 | `joypad_*_bt2usb_adafruit_feather_nrf52840.uf2` |
+
+---
+
+## wifi2usb
+
+Receives controller input over WiFi using the JOCP (Joypad Open Controller Protocol) and outputs as a standard USB gamepad. The adapter creates its own WiFi access point — no router or external network required.
+
+<Warning>
+`wifi2usb` is only available on Pico W and Pico 2 W. The CYW43 wireless module is required for both WiFi AP mode and the BLE beacon used for iOS app discovery.
+</Warning>
+
+### What it does
+
+- Creates a WiFi access point (`JOYPAD-XXXX`, unique per device)
+- Receives controller input via JOCP over UDP port 30100
+- Supports up to 4 simultaneous wireless controllers
+- Merges all inputs into a single USB gamepad output
+- Also broadcasts a BLE beacon for iOS device discovery
+- Supports the same USB output mode switching as `usb2usb`
+
+### Network configuration
+
+| Setting | Value |
+|---------|-------|
+| WiFi AP SSID | `JOYPAD-XXXX` (unique per device) |
+| WiFi password | `joypad1234` |
+| WiFi channel | 6 |
+| JOCP UDP port | 30100 |
+| JOCP TCP port | 30101 |
+
+### Supported boards
+
+| Board | Build command |
+|-------|---------------|
+| Raspberry Pi Pico W | `make wifi2usb_pico_w` |
+| Raspberry Pi Pico 2 W | `make wifi2usb_pico2_w` |
+
+### Build and flash
+
+```bash
+make wifi2usb_pico_w
+make flash-wifi2usb_pico_w
+```
+
+---
+
+## Web configuration
+
+All three apps support web-based configuration at [config.joypad.ai](https://config.joypad.ai) via WebSerial (Chrome or Edge required).
+
+From the web UI you can:
+
+- Switch USB output mode (SInput, XInput, PS3, PS4, Switch, and more)
+- Edit button remapping profiles
+- Monitor live input state
+- Run a rumble test
+- Manage Bluetooth device pairings
+- Update firmware
+
+<Tip>
+WebSerial requires Chrome or Edge. Firefox and Safari do not support the WebSerial API.
+</Tip>

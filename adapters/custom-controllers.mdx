@@ -1,0 +1,169 @@
+---
+title: "Custom controllers"
+description: "Build a USB gamepad from GPIO buttons and analog sticks using the controller app family — Fisher Price, Alpakka, MacroPad, and more."
+---
+
+The `controller` app family turns custom hardware with GPIO buttons and analog inputs into USB gamepads. Each controller type is a build-time configuration that defines its board and GPIO pin mapping. Rather than reading from a USB host or Bluetooth radio, these apps read directly from the microcontroller's GPIO pins.
+
+A dual-output variant, `controller_btusb`, adds BLE peripheral output alongside USB and supports I2C sensor inputs via the Adafruit JoyWing seesaw module.
+
+## Controller types at a glance
+
+| App | Controller | Input | Board | Build command |
+|-----|-----------|-------|-------|---------------|
+| `controller_fisherprice_v1` | Fisher Price V1 | Digital GPIO buttons | KB2040 | `make controller_fisherprice_v1_kb2040` |
+| `controller_fisherprice_v2` | Fisher Price V2 (analog) | GPIO buttons + ADC | KB2040 | `make controller_fisherprice_v2_kb2040` |
+| `controller_alpakka` | Alpakka | GPIO + I2C | Raspberry Pi Pico | `make controller_alpakka_pico` |
+| `controller_macropad` | Adafruit MacroPad | GPIO buttons | MacroPad RP2040 | `make controller_macropad` |
+| `controller_btusb` | JoyWing sensor | I2C (seesaw) | Pico W, Pico 2 W, Feather RP2040 | `make controller_btusb_pico_w` |
+
+## Core configuration
+
+<Tabs>
+  <Tab title="controller">
+    | Setting | Value |
+    |---------|-------|
+    | Routing mode | SIMPLE (1:1) |
+    | Player slots | 1 (fixed) |
+    | Input | GPIO buttons / ADC |
+    | Output | USB HID gamepad |
+  </Tab>
+  <Tab title="controller_btusb">
+    | Setting | Value |
+    |---------|-------|
+    | Routing mode | MERGE |
+    | Player slots | 1 (fixed) |
+    | Input | I2C sensor (JoyWing seesaw) |
+    | Output | BLE peripheral + USB HID gamepad |
+  </Tab>
+</Tabs>
+
+---
+
+## Fisher Price V1 — digital buttons
+
+The `controller_fisherprice_v1` build reads digital GPIO buttons only — no analog stick. Suitable for simple button-based controllers where you wire each button between a GPIO pin and ground.
+
+```bash
+make controller_fisherprice_v1_kb2040
+make flash-controller_fisherprice_v1_kb2040
+```
+
+**Output:** USB HID gamepad (SInput mode by default, cycle with double-click)
+
+---
+
+## Fisher Price V2 — buttons with analog stick
+
+The `controller_fisherprice_v2` build adds an ADC-read analog stick alongside digital GPIO buttons. Use this when your custom controller hardware includes a thumbstick or potentiometer.
+
+```bash
+make controller_fisherprice_v2_kb2040
+make flash-controller_fisherprice_v2_kb2040
+```
+
+**Output:** USB HID gamepad with left analog stick from ADC inputs
+
+<Info>
+The KB2040 has four ADC-capable pins (A0–A3 on GPIO 26–29). The V2 build uses two of these for the analog stick X and Y axes.
+</Info>
+
+---
+
+## Adafruit MacroPad — `controller_macropad`
+
+Targets the Adafruit MacroPad RP2040, a compact board with 12 mechanical switches in a 3×4 grid, a rotary encoder, a 128×64 OLED display, and a NeoPixel ring — all built in.
+
+<Note>
+`controller_macropad` is excluded from the `make all` build target and must be built explicitly. It uses the dedicated `macropad` board script.
+</Note>
+
+```bash
+make controller_macropad
+make flash-controller_macropad
+```
+
+**Output:** USB HID gamepad. The 12 keys map to gamepad buttons; the rotary encoder can be mapped to additional inputs.
+
+---
+
+## Alpakka — `controller_alpakka`
+
+Targets the Alpakka controller, an open-source game controller design that uses a Raspberry Pi Pico with GPIO buttons and I2C for additional peripherals.
+
+```bash
+make controller_alpakka_pico
+make flash-controller_alpakka_pico
+```
+
+**Output:** USB HID gamepad with GPIO and I2C inputs.
+
+---
+
+## JoyWing sensor — `controller_btusb`
+
+`controller_btusb` is a modular variant that reads from an Adafruit JoyWing seesaw (I2C gamepad breakout) and outputs simultaneously as a BLE peripheral and a USB HID gamepad. This is useful for wireless assistive gaming setups where you need both wired and wireless output at the same time.
+
+### Supported boards
+
+| Board | Build command |
+|-------|---------------|
+| Raspberry Pi Pico W | `make controller_btusb_pico_w` |
+| Raspberry Pi Pico 2 W | `make controller_btusb_pico2_w` |
+| Adafruit Feather RP2040 | `make controller_btusb_feather_rp2040` |
+| Adafruit Feather ESP32-S3 | `make controller_btusb_feather_esp32s3` |
+| Adafruit Feather nRF52840 | `make controller_btusb_feather_nrf52840` |
+
+```bash
+make controller_btusb_pico_w
+make flash-controller_btusb_pico_w
+```
+
+---
+
+## GPIO button mapping
+
+Joypad OS maps GPIO buttons to the W3C Gamepad API button order internally. When wiring your custom controller, each button press connects a GPIO pin to ground (active-low). The firmware applies internal pull-ups.
+
+| Constant | Maps to |
+|----------|---------|
+| `JP_BUTTON_B1` | A / Cross |
+| `JP_BUTTON_B2` | B / Circle |
+| `JP_BUTTON_B3` | X / Square |
+| `JP_BUTTON_B4` | Y / Triangle |
+| `JP_BUTTON_L1` | Left bumper |
+| `JP_BUTTON_R1` | Right bumper |
+| `JP_BUTTON_L2` | Left trigger |
+| `JP_BUTTON_R2` | Right trigger |
+| `JP_BUTTON_S1` | Select / Back |
+| `JP_BUTTON_S2` | Start |
+| `JP_BUTTON_L3` | Left stick click |
+| `JP_BUTTON_R3` | Right stick click |
+| `JP_BUTTON_A1` | Home / Guide |
+
+Analog axes (V2 and Alpakka builds) are read from ADC pins. The Y-axis convention follows HID standard: **0 = up, 128 = center, 255 = down**.
+
+<Warning>
+Nintendo-style controllers invert Y (0 = down, 255 = up). If you are adapting Nintendo hardware, the firmware inverts Y automatically. For custom GPIO builds, wire your stick so that pushing up produces a lower ADC reading.
+</Warning>
+
+---
+
+## Wiring notes
+
+- Connect each button between a GPIO pin and **GND** — internal pull-ups are enabled in firmware
+- For analog sticks, connect the wiper to an ADC pin and the ends of the potentiometer to 3.3V and GND
+- Keep analog wires short to reduce noise
+- The KB2040, Feather RP2040, and Pico all expose GPIO pins on headers suitable for direct wiring
+
+<Info>
+See the [wiring guide](/hardware/wiring) for board pinouts and connector diagrams. For parts and assembly guidance, see the [DIY builds guide](/hardware/diy).
+</Info>
+
+---
+
+## Adding a new controller type
+
+To define a new controller type, create a new app configuration in `src/apps/controller/` that specifies your GPIO pin assignments and button mapping. Then add a CMake target and a Makefile entry following the `<app>_<board>` naming convention.
+
+See [Adding an app](/development/adding-app) in the developer guide for the full walkthrough.

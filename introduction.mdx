@@ -1,0 +1,94 @@
+---
+title: "Introduction"
+description: "Joypad OS is open-source firmware for RP2040, ESP32-S3, and nRF52840 microcontrollers that handles controller protocol translation — no PC required."
+---
+
+Joypad OS runs on small microcontroller boards — the kind you'd find inside a controller or adapter, not on a PC. Flash it onto a chip and it handles everything: reading controllers, translating protocols, routing inputs to outputs, and managing button remapping.
+
+Formerly known as **USBRetro**.
+
+## What you can build
+
+<CardGroup cols={2}>
+  <Card title="Console adapters" icon="plug" href="/adapters/console-adapters">
+    Use any modern USB or Bluetooth controller on retro consoles like GameCube, PCEngine, Dreamcast, Nuon, and 3DO — or convert retro controllers to USB.
+  </Card>
+  <Card title="Custom controllers" icon="sliders" href="/adapters/custom-controllers">
+    Wire up buttons, sticks, and sensors to a microcontroller and get a USB gamepad that works everywhere.
+  </Card>
+  <Card title="Assistive gaming setups" icon="accessibility" href="/adapters/custom-controllers">
+    Merge multiple input devices — switches, joysticks, eye trackers — into a single controller output using flexible input routing.
+  </Card>
+  <Card title="Wireless adapters" icon="bluetooth" href="/adapters/usb-bluetooth-adapters">
+    Turn any Bluetooth controller into a wired USB gamepad for low-latency play.
+  </Card>
+</CardGroup>
+
+## Supported consoles
+
+Joypad OS translates controller input into the native protocol for each retro console:
+
+| Console | Highlights |
+|---------|-----------|
+| **PCEngine / TurboGrafx-16** | Multitap (5 players), mouse, 2/3/6-button |
+| **GameCube / Wii** | Profiles, rumble, keyboard mode |
+| **Sega Dreamcast** | Rumble, analog triggers, 4 players |
+| **Nuon DVD Players** | Controller, spinner (Tempest 3000), in-game reset |
+| **3DO Interactive Multiplayer** | 8 players, mouse, extension passthrough |
+| **N64** | USB/BT and native N64 controller input |
+| **Neo Geo / SuperGun** | 7 profiles, 1L6B arcade layouts |
+| **Casio Loopy** | 4 players (experimental) |
+
+## Supported input controllers
+
+- **Xbox** — OG, 360, One, Series X\|S (USB + Bluetooth)
+- **PlayStation** — Classic, DS3, DS4, DualSense (USB + Bluetooth)
+- **Nintendo** — Switch Pro, Switch 2 Pro, Joy-Con, NSO GameCube, GameCube adapter (USB + Bluetooth)
+- **8BitDo** — PCE 2.4g, M30, NeoGeo, BT adapters
+- **Other** — Hori, Logitech, Google Stadia, Sega Astro City, generic HID
+- **Peripherals** — USB keyboards, mice, hubs, Bluetooth dongles
+- **Native** — SNES, N64, GameCube, Neo Geo controllers (directly wired)
+
+## Supported platforms
+
+| Platform | Chip | Bluetooth | Notes |
+|----------|------|-----------|-------|
+| **RP2040** | ARM Cortex-M0+ (dual-core) | Classic BT + BLE (Pico W) or via dongle | All console adapters, USB output, custom controllers |
+| **ESP32-S3** | Xtensa LX7 (dual-core) | BLE only | bt2usb |
+| **nRF52840** | ARM Cortex-M4 | BLE only | bt2usb, usb2usb |
+
+## How it works
+
+Joypad OS normalizes every input source into a common format, routes it through configurable player slots, and translates it into whatever output protocol the target needs — from retro console protocols bit-banged via PIO to modern USB HID and XInput.
+
+```
+Any Input                        Router                       Any Output
+─────────                        ──────                       ──────────
+USB controllers ──┐                                           ┌──→ Retro consoles
+Bluetooth ────────┤                                           ├──→ USB gamepad
+WiFi ─────────────┼──→  normalize  →  route  →  translate  ──┼──→ XInput / PS4 / Switch
+SNES / N64 / GC ──┤         ↓                                ├──→ Keyboard + mouse
+GPIO buttons ─────┘    profile_apply()                        └──→ Custom outputs
+```
+
+- **Router** — SIMPLE (1:1), MERGE (all→one), or BROADCAST (all→all) modes
+- **Profiles** — Per-app button remapping, cycled via SELECT + D-pad
+- **Dual-core** — Core 0 handles input, Core 1 handles timing-critical output (RP2040)
+- **PIO** — Programmable I/O for console protocols (GameCube Joybus, Dreamcast Maple, etc.)
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card title="Flash your adapter" icon="bolt" href="/getting-started/installation">
+    Download a pre-built `.uf2` and flash it onto your adapter in under a minute.
+  </Card>
+  <Card title="Build from source" icon="hammer" href="/getting-started/building">
+    Set up a development environment and compile firmware for any supported board.
+  </Card>
+  <Card title="Supported hardware" icon="microchip" href="/hardware/boards">
+    Compare RP2040, ESP32-S3, and nRF52840 boards and choose the right one.
+  </Card>
+  <Card title="Architecture overview" icon="sitemap" href="/architecture/overview">
+    Understand the four-layer model: Apps, Input, Core, and Output.
+  </Card>
+</CardGroup>

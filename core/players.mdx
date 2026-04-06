@@ -1,0 +1,254 @@
+---
+title: "Player Management"
+description: "Maps physical controllers to player slots and routes console-generated rumble and LED feedback back to the correct physical device."
+---
+
+The player manager tracks the mapping from physical controllers to player slots and handles feedback routing — rumble, LEDs, and adaptive triggers — from the output side back to input devices.
+
+Source: `src/core/services/players/manager.h`, `manager.c`, and `feedback.h`
+
+## Player data structure
+
+Each player slot is a `Player_t`:
+
+```c
+typedef struct TU_ATTR_PACKED
+{
+  int dev_addr;                // Device address (-1 = empty slot)
+  int instance;                // Device instance/connection index
+  int player_number;           // 1-based player number (0 = unassigned)
+  input_transport_t transport; // Connection type (USB, BT Classic, BLE, native)
+  char name[PLAYER_NAME_LEN];  // Device name (e.g., "DualSense", "Xbox Controller")
+} Player_t;
+```
+
+The `players[]` array holds up to `MAX_PLAYERS` slots (default 5, configurable per-app). The `playersCount` global tracks the highest occupied slot + 1.
+
+## Slot modes
+
+Apps configure one of two slot modes at init via `player_config_t.slot_mode`:
+
+<Tabs>
+  <Tab title="SHIFT mode">
+    Players shift up when someone disconnects. If Player 2 disconnects, Player 3 becomes Player 2 and Player 4 becomes Player 3. All remaining players are renumbered.
+
+    Used by consoles where player numbers are positional:
+    - **PCEngine** (5-player multitap) — host expects contiguous player slots
+    - **3DO** (daisy-chain) — player order is determined by cable position
+
+    ```c
+    player_config_t player_cfg = {
+        .slot_mode = PLAYER_SLOT_SHIFT,
+        .max_slots = 5,
+        .auto_assign_on_press = true,
+    };
+    players_init_with_config(&player_cfg);
+    ```
+  </Tab>
+  <Tab title="FIXED mode">
+    Players keep their assigned slots permanently. If Player 2 disconnects, slot 2 stays empty (`dev_addr = -1`) and Player 3 remains in slot 3.
+
+    Used by consoles with fixed port hardware:
+    - **GameCube** (4-port) — each port is wired to a specific console input
+    - Any app where controllers should always be in a specific position
+
+    ```c
+    player_config_t player_cfg = {
+        .slot_mode = PLAYER_SLOT_FIXED,
+        .max_slots = 4,
+        .auto_assign_on_press = true,
+    };
+    players_init_with_config(&player_cfg);
+    ```
+
+    Or use defaults (SHIFT mode, 5 slots):
+
+    ```c
+    players_init();
+    ```
+  </Tab>
+</Tabs>
+
+## Auto-assign on press
+
+When `auto_assign_on_press` is enabled (the default), controllers are not assigned a slot until the user presses a button or moves an analog stick beyond the threshold (~40% deflection). This prevents phantom players from devices that send idle reports at connect time.
+
+The router calls `add_player()` when it first sees meaningful input from an unassigned device. The device name is looked up from the USB HID registry, Bluetooth device table, or I2C peer name.
+
+## Player lifecycle
+
+<Steps>
+  <Step title="Connect">
+    The input driver detects a new device and registers it with the transport layer (USB enumeration, BT connection event, etc.).
+  </Step>
+  <Step title="First input">
+    The router calls `add_player()` when buttons are pressed or an analog stick is deflected beyond threshold. The device is assigned to a slot.
+
+    ```c
+    // Called internally by the router — input drivers do not call this directly.
+    int add_player(int dev_addr, int instance, input_transport_t transport, const char* name);
+    ```
+  </Step>
+  <Step title="Active">
+    Input flows through the router to the assigned output slot. Feedback (rumble, LEDs) is routed back by `players_task()`.
+  </Step>
+  <Step title="Disconnect">
+    The input driver calls `remove_players_by_address()`:
+
+    ```c
+    remove_players_by_address(dev_addr, instance);
+    ```
+
+    - **SHIFT mode**: Remaining players shift up, all renumbered.
+    - **FIXED mode**: Slot marked empty, other players unchanged.
+  </Step>
+  <Step title="Router cleanup">
+    Call `router_device_disconnected()` before `remove_players_by_address()` to clear the device's output state and blend tracking:
+
+    ```c
+    router_device_disconnected(dev_addr, instance);
+    remove_players_by_address(dev_addr, instance);
+    ```
+  </Step>
+</Steps>
+
+## Multi-player setup
+
+When multiple controllers connect, each gets assigned to the next available slot in order of first meaningful input. For a 4-player GameCube session:
+
+1. Controller connects → enters idle state (no slot assigned)
+2. Player presses a button → `add_player()` assigns slot 0 (Player 1)
+3. Second controller's first press → slot 1 (Player 2)
+4. Third → slot 2 (Player 3), fourth → slot 3 (Player 4)
+
+In FIXED mode, if Player 2 disconnects and reconnects, they get the next available empty slot — they are **not** guaranteed to reclaim slot 1. In SHIFT mode, they rejoin at the end.
+
+## Feedback routing
+
+The feedback system routes console-generated feedback back to the correct physical controller. This enables cross-stack feedback: a Bluetooth DualSense vibrates when a GameCube game triggers rumble.
+
+### Feedback state per player
+
+```c
+typedef struct {
+    feedback_rumble_t rumble;
+    feedback_led_t led;
+    feedback_trigger_t left_trigger;
+    feedback_trigger_t right_trigger;
+
+    bool rumble_dirty;    // Changed since last applied
+    bool led_dirty;
+    bool triggers_dirty;
+} feedback_state_t;
+```
+
+### Rumble structure
+
+```c
+typedef struct {
+    uint8_t left;           // Heavy/low-frequency motor (0-255)
+    uint8_t right;          // Light/high-frequency motor (0-255)
+    uint8_t left_trigger;   // Left trigger motor (Xbox, DualSense)
+    uint8_t right_trigger;  // Right trigger motor (Xbox, DualSense)
+} feedback_rumble_t;
+```
+
+### Feedback flow
+
+<Steps>
+  <Step title="Console triggers feedback">
+    The output driver reads rumble or LED state from the console protocol (e.g., GameCube rumble motor command in a Joybus response packet).
+  </Step>
+  <Step title="Output driver sets feedback">
+    The output driver calls the feedback API:
+
+    ```c
+    feedback_set_rumble(player_index, left, right);
+    feedback_set_led_player(player_index, player_num);
+    feedback_set_led_rgb(player_index, r, g, b);
+    ```
+  </Step>
+  <Step title="players_task() routes it">
+    `players_task()`, called from the main loop every iteration, checks the dirty flags and routes the feedback state to the correct input driver based on `dev_addr` and `instance`.
+  </Step>
+  <Step title="Input driver applies feedback">
+    The input driver sends the appropriate hardware command: a USB HID output report, a Bluetooth rumble command, etc.
+  </Step>
+</Steps>
+
+### Feedback API
+
+```c
+// Rumble
+void feedback_set_rumble(uint8_t player_index, uint8_t left, uint8_t right);
+void feedback_set_rumble_ext(uint8_t player_index, const feedback_rumble_t* rumble);
+
+// LEDs
+void feedback_set_led_player(uint8_t player_index, uint8_t player_num);
+void feedback_set_led_rgb(uint8_t player_index, uint8_t r, uint8_t g, uint8_t b);
+void feedback_set_led(uint8_t player_index, const feedback_led_t* led);
+
+// Adaptive triggers (DualSense, Xbox Series)
+void feedback_set_trigger(uint8_t player_index, bool left, const feedback_trigger_t* trigger);
+
+// Clear all feedback for a player
+void feedback_clear(uint8_t player_index);
+```
+
+### Device capability flags
+
+Input drivers report their feedback capabilities so the system can adapt:
+
+| Flag | Description |
+|------|-------------|
+| `FEEDBACK_CAP_RUMBLE_BASIC` | Standard 2-motor rumble |
+| `FEEDBACK_CAP_RUMBLE_TRIGGER` | Trigger motors (Xbox, DualSense) |
+| `FEEDBACK_CAP_RUMBLE_HD` | HD rumble (Switch) |
+| `FEEDBACK_CAP_LED_PLAYER` | Player indicator LEDs (1–4) |
+| `FEEDBACK_CAP_LED_RGB` | RGB lightbar (DualShock 4, DualSense) |
+| `FEEDBACK_CAP_TRIGGER_ADAPT` | Adaptive triggers (DualSense) |
+
+### Profile indicator priority
+
+During profile change indication, external rumble and LED calls are temporarily blocked. The profile indicator uses internal setter functions (`feedback_set_rumble_internal`, `feedback_set_led_player_internal`, etc.) that bypass this check, ensuring the profile change feedback is always visible to the user.
+
+## Player LED patterns
+
+The `PLAYER_LEDS[]` array provides bitmask patterns for controllers with player indicator LEDs (PS3, Switch Joy-Con, etc.):
+
+| Player | Pattern | LEDs on |
+|--------|---------|---------|
+| 1 | `0x01` | LED 1 |
+| 2 | `0x02` | LED 2 |
+| 3 | `0x04` | LED 3 |
+| 4 | `0x08` | LED 4 |
+| 5 | `0x09` | LED 1 + 4 |
+| 6 | `0x0A` | LED 2 + 4 |
+| 7+ | `0x0C` | LED 3 + 4 |
+
+## Full player management API
+
+```c
+// Initialization
+void players_init(void);                                       // Default: SHIFT, 5 slots
+void players_init_with_config(const player_config_t* config);
+
+// Main loop
+void players_task(void);   // Routes dirty feedback to input drivers
+
+// Slot mode (runtime change)
+void players_set_slot_mode(player_slot_mode_t mode);
+player_slot_mode_t players_get_slot_mode(void);
+
+// Lookup and assignment
+int find_player_index(int dev_addr, int instance); // Returns -1 if not found
+int add_player(int dev_addr, int instance, input_transport_t transport, const char* name);
+const char* get_player_name(int player_index);
+void remove_players_by_address(int dev_addr, int instance); // instance=-1: remove all
+```
+
+## See also
+
+- [Router](/core/router) — How input flows to player slots
+- [Button Constants](/core/buttons) — `JP_BUTTON_*` reference
+- [Storage](/core/storage) — Flash persistence for settings

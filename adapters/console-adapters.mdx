@@ -1,0 +1,266 @@
+---
+title: "Console adapters"
+description: "Use any USB or Bluetooth controller on retro consoles — PCEngine, GameCube, Dreamcast, Nuon, 3DO, N64, Neo Geo, Casio Loopy, and more."
+---
+
+Console adapter apps accept USB and Bluetooth controllers as input and translate them into the protocol the target console expects. Each app runs on a supported RP2040 board and handles timing-critical output via PIO state machines on Core 1.
+
+## All console adapter apps
+
+| App | Console | Max players | Routing | Board | Build command |
+|-----|---------|------------|---------|-------|---------------|
+| `usb2pce` | PCEngine / TurboGrafx-16 | 5 | SIMPLE | KB2040 | `make usb2pce_kb2040` |
+| `usb2gc` | GameCube / Wii | 4 | MERGE | KB2040, RP2040-Zero | `make usb2gc_kb2040` |
+| `usb2dc` | Sega Dreamcast | 4 | MERGE | KB2040, RP2040-Zero | `make usb2dc_kb2040` |
+| `usb2nuon` | Nuon DVD players | 1 | SIMPLE | KB2040 | `make usb2nuon_kb2040` |
+| `usb23do` | 3DO Interactive Multiplayer | 8 | SIMPLE | RP2040-Zero | `make usb23do_rp2040zero` |
+| `usb2neogeo` | Neo Geo / SuperGun | 1 | SIMPLE | KB2040, Pico, RP2040-Zero | `make usb2neogeo_kb2040` |
+| `usb2n64` | Nintendo 64 | 1 | MERGE | KB2040 | `make usb2n64_kb2040` |
+| `usb2loopy` | Casio Loopy | 4 | SIMPLE | KB2040 | `make usb2loopy_kb2040` |
+
+<Note>
+Bluetooth-only variants (`bt2gc`, `bt2n64`, `bt2nuon`, `bt2loopy`) are also available for Pico W and Pico 2 W when you don't need USB host support.
+</Note>
+
+## Quick start
+
+<Steps>
+  <Step title="Install prerequisites">
+    Install the ARM toolchain and clone the repository:
+
+    ```bash
+    brew install --cask gcc-arm-embedded cmake git
+    git clone https://github.com/joypad-ai/joypad-os.git
+    cd joypad-os && make init
+    ```
+  </Step>
+  <Step title="Build your target app">
+    Run the build command for your console and board:
+
+    ```bash
+    make usb2gc_kb2040       # GameCube — KB2040
+    make usb2pce_kb2040      # PCEngine — KB2040
+    make usb2dc_kb2040       # Dreamcast — KB2040
+    make usb23do_rp2040zero  # 3DO — RP2040-Zero
+    make usb2nuon_kb2040     # Nuon — KB2040
+    make usb2neogeo_kb2040   # Neo Geo — KB2040
+    make usb2n64_kb2040      # N64 — KB2040
+    make usb2loopy_kb2040    # Casio Loopy — KB2040
+    ```
+
+    Output: `releases/joypad_<commit>_<app>_<board>.uf2`
+  </Step>
+  <Step title="Flash the firmware">
+    Hold **BOOT** while connecting USB-C to enter the bootloader, then drag the `.uf2` onto the `RPI-RP2` drive:
+
+    ```bash
+    make flash-usb2gc_kb2040
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Console details
+
+### PCEngine / TurboGrafx-16 — `usb2pce`
+
+Emulates up to 5 players via the PCEngine multitap protocol. Automatically handles 2-button, 3-button, and 6-button mode switching based on what the game requests. Also supports USB mouse for PCEngine mouse-compatible titles.
+
+<CardGroup cols={2}>
+  <Card title="Max players" icon="users">
+    5 via multitap — works with Bomberman '93 / '94, Dungeon Explorer, Moto Roader
+  </Card>
+  <Card title="Button modes" icon="gamepad">
+    2-button, 3-button (Street Fighter II), and 6-button auto-detected
+  </Card>
+  <Card title="Mouse support" icon="mouse-pointer">
+    USB mouse maps to PCEngine mouse for Afterburner II, Darius Plus, Lemmings
+  </Card>
+  <Card title="Turbo" icon="bolt">
+    Buttons III and IV have built-in auto-fire at ~15Hz
+  </Card>
+</CardGroup>
+
+```bash
+make usb2pce_kb2040
+make flash-usb2pce_kb2040
+```
+
+---
+
+### GameCube / Wii — `usb2gc`
+
+Outputs via the joybus PIO protocol. Requires a 130MHz system clock for correct joybus timing. Supports 5 button mapping profiles, keyboard mode for Phantasy Star Online, copilot mode, and rumble feedback.
+
+<CardGroup cols={2}>
+  <Card title="Keyboard mode" icon="keyboard">
+    Toggle with Scroll Lock or F14 for PSO and other GameCube keyboard games
+  </Card>
+  <Card title="Copilot mode" icon="code-merge">
+    Multiple controllers OR'd into one output slot for assisted play
+  </Card>
+  <Card title="Rumble" icon="signal">
+    Forwarded to Xbox, DualShock 3/4/5, Switch Pro, and 8BitDo controllers
+  </Card>
+  <Card title="Adaptive triggers" icon="sliders">
+    DualSense L2/R2 analog mapped to GameCube L/R with configurable threshold
+  </Card>
+</CardGroup>
+
+```bash
+make usb2gc_kb2040       # KB2040
+make usb2gc_rp2040zero   # RP2040-Zero
+```
+
+---
+
+### Sega Dreamcast — `usb2dc`
+
+Outputs via the Maple Bus PIO protocol. Supports analog triggers, Puru Puru Pack rumble feedback, and 4 players identified by NeoPixel LED color.
+
+| Player | LED color |
+|--------|-----------|
+| P1 | Orange |
+| P2 | Blue |
+| P3 | Red |
+| P4 | Green |
+
+The RP2040-Zero build uses the same pinout as USB4Maple (GPIO 14/15), making it a drop-in firmware replacement for existing USB4Maple hardware.
+
+```bash
+make usb2dc_kb2040       # KB2040 (Maple pins: GPIO 2/3)
+make usb2dc_rp2040zero   # RP2040-Zero (Maple pins: GPIO 14/15, USB4Maple-compatible)
+```
+
+---
+
+### Nuon DVD players — `usb2nuon`
+
+Outputs via the Polyface serial PIO protocol. Supports spinner emulation for Tempest 3000 using a USB mouse, and In-Game Reset (IGR) to return to the DVD menu or power off the player.
+
+<CardGroup cols={2}>
+  <Card title="Spinner emulation" icon="rotate">
+    USB mouse X-axis → Nuon spinner. Left click → fire. Optimized for Tempest 3000.
+  </Card>
+  <Card title="In-Game Reset" icon="power">
+    Hold L1 + R1 + Start + Select. Tap for Stop (DVD menu), hold 2s for Power Off.
+  </Card>
+</CardGroup>
+
+Compatible players: Samsung DVD-N501/N504/N505, Toshiba SD-2300, Motorola Streamaster 5000, RCA DRC300N/DRC480N.
+
+```bash
+make usb2nuon_kb2040
+make flash-usb2nuon_kb2040
+```
+
+---
+
+### 3DO Interactive Multiplayer — `usb23do`
+
+Outputs via the PBUS daisy-chain PIO protocol. Supports up to 8 players, USB mouse emulation, and extension passthrough for native 3DO controllers. Requires a bidirectional 3.3V-to-5V level shifter.
+
+<CardGroup cols={2}>
+  <Card title="8-player support" icon="users">
+    Up to 8 USB controllers via hub, each mapped to a PBUS slot
+  </Card>
+  <Card title="Extension passthrough" icon="plug">
+    Native 3DO controllers connect in series after the USB adapter
+  </Card>
+  <Card title="Mouse support" icon="mouse-pointer">
+    USB mouse emulates 3DO mouse for Myst, The Horde, Lemmings
+  </Card>
+  <Card title="Device types" icon="layers">
+    Joypad (2-byte), Joystick (9-byte), and Mouse (4-byte) PBUS reports
+  </Card>
+</CardGroup>
+
+Compatible consoles: Panasonic FZ-1/FZ-10, Goldstar GDO-101M/GDO-202M, Sanyo TRY 3DO, Creative Labs 3DO Blaster.
+
+```bash
+make usb23do_rp2040zero
+make flash-usb23do_rp2040zero
+```
+
+---
+
+### Neo Geo / SuperGun — `usb2neogeo`
+
+Outputs via active-low GPIO to a DB15 connector, using open-drain logic to safely interface 3.3V GPIO with 5V Neo Geo hardware. Supports 7 button mapping profiles for different arcade stick layouts.
+
+| Profile | Description |
+|---------|-------------|
+| **Default** | Standard 1L6B layout |
+| **Type A** | 1L6B aligned to right side of 1L8B stick |
+| **Type B** | Neo Geo MVS 1L4B layout |
+| **Type C** | Neo Geo MVS Big Red layout |
+| **Type D** | Neo Geo MVS U4 layout |
+| **Pad A** | AES pad, classic diamond (A/B/C/D on face buttons) |
+| **Pad B** | AES pad, KOF/fighting style |
+
+```bash
+make usb2neogeo_kb2040       # KB2040
+make usb2neogeo_pico         # Raspberry Pi Pico
+make usb2neogeo_rp2040zero   # RP2040-Zero
+```
+
+---
+
+### Nintendo 64 — `usb2n64`
+
+Outputs via the joybus PIO protocol to the N64 controller port.
+
+```bash
+make usb2n64_kb2040
+make flash-usb2n64_kb2040
+```
+
+---
+
+### Casio Loopy — `usb2loopy`
+
+<Warning>
+This app is experimental. The Loopy protocol is partially implemented and timing issues may exist. Testing has been limited.
+</Warning>
+
+Connects USB and Bluetooth controllers to the Casio Loopy, a Japan-only 32-bit console from 1995. Supports up to 4 players via PIO-based serial protocol.
+
+```bash
+make usb2loopy_kb2040
+make flash-usb2loopy_kb2040
+```
+
+---
+
+## Profile switching
+
+Most console adapter apps support button remapping profiles. The `usb2gc` app ships with 5 profiles; `usb23do` has 3; `usb2neogeo` has 7.
+
+To switch profiles:
+
+1. Hold **Select** for 2 seconds
+2. Press **D-Pad Up** or **D-Pad Down** to cycle
+3. The controller rumbles and the LED flashes to confirm
+4. The selected profile is saved to flash and persists across power cycles
+
+<Tip>
+Wait at least 5 seconds after changing a profile before disconnecting power to ensure the flash write completes.
+</Tip>
+
+---
+
+## LED status codes
+
+The NeoPixel LED on supported boards indicates adapter state:
+
+| LED state | Meaning |
+|-----------|---------|
+| Solid white | Booting / waiting for controller |
+| Solid color (per player) | Controller connected (Dreamcast: Orange/Blue/Red/Green) |
+| Fast flash | Profile changed |
+| Off | No power |
+
+<Info>
+Not all boards have a NeoPixel. The Raspberry Pi Pico uses the onboard LED instead, which has limited color support.
+</Info>

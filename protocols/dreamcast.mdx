@@ -1,0 +1,148 @@
+---
+title: "Dreamcast Protocol"
+description: "Maple Bus differential serial protocol for Dreamcast controller emulation. Supports up to 4 players, analog triggers, and Puru Puru rumble feedback."
+---
+
+The Dreamcast output interface emulates a Dreamcast controller connected via the Maple Bus protocol. It supports up to 4 players, analog triggers, and Puru Puru (rumble pack) feedback. The adapter identifies to the console as a standard controller with vibration pack capability.
+
+## Protocol overview
+
+<CardGroup cols={2}>
+  <Card title="Wire protocol" icon="ethernet">
+    Maple Bus — differential signaling on two data lines (SDCKA/SDCKB)
+  </Card>
+  <Card title="PIO program" icon="code">
+    `maple.pio`, runs on Core 1
+  </Card>
+  <Card title="Response delay" icon="clock">
+    Minimum 50µs before responding to console commands
+  </Card>
+  <Card title="Max players" icon="users">
+    4 (one per Maple Bus port)
+  </Card>
+</CardGroup>
+
+### How it works
+
+The Dreamcast console sends command frames over the Maple Bus. The adapter responds with device info or controller state, depending on the command. Core 1 handles real-time Maple Bus responses; Core 0 runs periodic maintenance via `dreamcast_task()`.
+
+The adapter advertises two function types:
+- `MAPLE_FT_CONTROLLER` (`0x00000001`) — standard controller
+- `MAPLE_FT_VIBRATION` (`0x00000100`) — Puru Puru rumble pack
+
+## Connector pinout
+
+Looking at the controller plug (male, from the controller cable):
+
+```
+     ___
+   /  5  \
+  | 4   3 |
+  | 2   1 |
+   \_____/
+```
+
+| Pin | Signal | Description |
+|-----|--------|-------------|
+| 1 | SDCKA | Data line A |
+| 2 | GND (Sense) | Ground / device detect |
+| 3 | +5V | Power |
+| 4 | GND | Ground |
+| 5 | SDCKB | Data line B |
+
+## GPIO pin assignments
+
+<Tabs>
+  <Tab title="KB2040 (default)">
+    | Signal | GPIO | Dreamcast pin |
+    |--------|------|---------------|
+    | SDCKA | GP2 | Pin 1 |
+    | SDCKB | GP3 | Pin 5 |
+  </Tab>
+  <Tab title="RP2040-Zero (USB4Maple-compatible)">
+    | Signal | GPIO | Dreamcast pin |
+    |--------|------|---------------|
+    | SDCKA | GP14 | Pin 1 |
+    | SDCKB | GP15 | Pin 5 |
+  </Tab>
+</Tabs>
+
+## Maple Bus commands
+
+| Command | Code | Description |
+|---------|------|-------------|
+| Device Info | `0x01` | Returns controller identity and function types |
+| Extended Device Info | `0x02` | Returns extended device capabilities |
+| Reset | `0x03` | Resets device state |
+| Kill | `0x04` | Device shutdown |
+| Get Condition | `0x09` | Polls controller state (buttons, sticks, triggers) |
+| Set Condition | `0x0E` | Sets peripheral settings (rumble motor commands) |
+
+## Player support
+
+- **Max players**: 4
+- **Addressing**: Each port addressed via Maple Bus port bits (0–3) in the frame header
+- **Player colors**: Orange (P1), Blue (P2), Red (P3), Green (P4)
+
+## Button mapping
+
+Dreamcast buttons are active-low in hardware (0 = pressed), handled internally by the driver.
+
+| JP_BUTTON_* | DC button | Notes |
+|-------------|-----------|-------|
+| `JP_BUTTON_B1` | A | Bottom face button |
+| `JP_BUTTON_B2` | B | Right face button |
+| `JP_BUTTON_B3` | X | Left face button |
+| `JP_BUTTON_B4` | Y | Top face button |
+| `JP_BUTTON_L1` | L Trigger (digital) | Left shoulder |
+| `JP_BUTTON_R1` | R Trigger (digital) | Right shoulder |
+| `JP_BUTTON_L2` | D button | Distinct from L; useful for N64-to-DC |
+| `JP_BUTTON_R2` | R Trigger (analog) | Analog trigger |
+| `JP_BUTTON_L3` | Z | Extra face button |
+| `JP_BUTTON_R3` | C | Extra face button |
+| `JP_BUTTON_S1` | D (2nd Start) | Arcade stick second start |
+| `JP_BUTTON_S2` | Start | Start button |
+| `JP_BUTTON_A1` | Start | Home/Guide also maps to Start |
+| `JP_BUTTON_DU/DD/DL/DR` | D-pad | Direct mapping |
+
+## Analog mapping
+
+| Input | DC output | Range |
+|-------|-----------|-------|
+| Left stick X | `joy_x` | 0–255, 128 = center |
+| Left stick Y | `joy_y` | 0–255, 128 = center |
+| Right stick X | `joy2_x` | 0–255, 128 = center (extended controllers) |
+| Right stick Y | `joy2_y` | 0–255, 128 = center (extended controllers) |
+| L2 analog | `lt` | 0 = released, 255 = full |
+| R2 analog | `rt` | 0 = released, 255 = full |
+
+## Rumble (Puru Puru Pack)
+
+The Dreamcast sends vibration commands via `MAPLE_CMD_SET_CONDITION` (`0x0E`) on the vibration function type. The adapter extracts three fields from the command:
+
+| Field | Range | Description |
+|-------|-------|-------------|
+| Power | 0–7 | Vibration intensity |
+| Frequency | — | Motor oscillation rate |
+| Increment | — | Power ramp direction |
+
+Power is converted to a 0–255 rumble value and routed to the input controller's vibration motor via the player manager. Detailed motor parameters are accessible via `dreamcast_get_purupuru_state()`.
+
+## Build commands
+
+<CodeGroup>
+
+```bash usb2dc (KB2040)
+make usb2dc_kb2040
+```
+
+</CodeGroup>
+
+Output: `releases/joypad_<commit>_usb2dc_kb2040.uf2`
+
+## Apps using this output
+
+| App | Description |
+|-----|-------------|
+| `usb2dc` | USB/Bluetooth controllers to Dreamcast |
+| `n642dc` | N64 controllers to Dreamcast |

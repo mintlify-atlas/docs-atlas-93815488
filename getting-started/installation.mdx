@@ -1,0 +1,165 @@
+---
+title: "Installation & flashing"
+description: "Download pre-built firmware and flash it onto your Joypad adapter — no build tools required."
+---
+
+## Pre-built hardware
+
+### Joypad Dev Kits
+
+The easiest way to get started without DIY. Upcoming dev kits:
+
+- **USB2USB** — USB controller passthrough adapter
+- **BT2USB** — Bluetooth-to-USB controller adapter
+
+Visit [joypad.ai/shop](https://joypad.ai/shop) for current availability.
+
+### Legacy Controller Adapter products
+
+The following Controller Adapter products are fully compatible with Joypad OS firmware and can be updated using the instructions below:
+
+| Product | Console |
+|---------|---------|
+| USB-2-PCE | PCEngine / TurboGrafx-16 |
+| GC USB | GameCube / Wii |
+| NUON USB | Nuon DVD Players |
+| USB-2-3DO | 3DO Interactive Multiplayer |
+
+## Downloading firmware
+
+1. Go to [GitHub Releases](https://github.com/joypad-ai/joypad-os/releases)
+2. Download the latest `.uf2` file that matches your product:
+
+| File | Product |
+|------|---------|
+| `joypad_<commit>_usb2pce_kb2040.uf2` | PCEngine adapter |
+| `joypad_<commit>_usb2gc_kb2040.uf2` | GameCube adapter |
+| `joypad_<commit>_usb2nuon_kb2040.uf2` | Nuon adapter |
+| `joypad_<commit>_usb23do_rp2040zero.uf2` | 3DO adapter |
+| `joypad_<commit>_usb2loopy_kb2040.uf2` | Casio Loopy adapter (experimental) |
+
+## Flashing instructions
+
+<Tabs>
+  <Tab title="Standard method">
+    Works for: USB-2-PCE, NUON USB, USB-2-3DO, USB-2-Loopy.
+
+    <Steps>
+      <Step title="Prepare the adapter">
+        Disconnect the adapter from the console. Disconnect all USB devices from the adapter.
+      </Step>
+      <Step title="Enter bootloader mode">
+        Hold the **BOOT** button on the adapter. While holding BOOT, connect the USB-C cable to your computer. Release the BOOT button. A drive named `RPI-RP2` should appear.
+      </Step>
+      <Step title="Flash firmware">
+        Drag and drop the `.uf2` file onto the `RPI-RP2` drive. The file copies instantly and the drive ejects automatically.
+      </Step>
+      <Step title="Verify">
+        The adapter LED should light up. Reconnect the adapter to the console, connect a USB controller, and test.
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="GC USB (no BOOT button)">
+    The GC USB adapter automatically enters bootloader mode when powered on without a GameCube console connected.
+
+    <Steps>
+      <Step title="Prepare the adapter">
+        Disconnect the adapter from the GameCube console. Disconnect all USB devices from the adapter.
+      </Step>
+      <Step title="Enter bootloader mode">
+        Connect the USB-C cable to your computer — no button press needed. A drive named `RPI-RP2` should appear.
+      </Step>
+      <Step title="Flash firmware">
+        Drag and drop the `.uf2` file onto the `RPI-RP2` drive. The file copies and the drive ejects automatically.
+      </Step>
+      <Step title="Verify">
+        The adapter LED should light up. Reconnect the adapter to the GameCube, connect a USB controller, and test.
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+## LED status indicators
+
+| State | LED |
+|-------|-----|
+| No controllers connected | Solid green |
+| 1 controller connected | Solid blue |
+| 2 controllers connected | Purple |
+| 3+ controllers connected | Red |
+| Profile changed | Yellow flash (controller rumbles if supported) |
+| Bootloader mode | No LED (`RPI-RP2` drive appears on computer) |
+
+## Profile switching
+
+Several adapters support switchable button mapping profiles. Profiles are stored in flash and persist across power cycles.
+
+### GameCube (USB2GC)
+
+Hold **Select** for 2 seconds, then press **D-pad Up/Down** to cycle profiles.
+
+Available profiles: Default, SNES, SSBM, MKWii, Fighting.
+
+### 3DO (USB23DO)
+
+Hold **Select** for 2 seconds, then press **D-pad Up/Down** to cycle profiles.
+
+Available profiles: Default, Fighting, Shooter.
+
+### Nuon (USB2Nuon)
+
+In-game reset (IGR): Hold **L1 + R1 + Start + Select**.
+
+- Tap: Stop button (return to menu)
+- Hold 2 seconds: Power button (power off player)
+
+<Note>
+  Reflashing firmware does **not** erase the saved profile by design. To reset to the default profile, switch to profile 0 by pressing D-pad Up during profile change.
+</Note>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="RPI-RP2 drive doesn't appear">
+    **On Windows:**
+    - Check Device Manager for a "RP2 Boot" device
+    - Try a different USB port
+    - Try a different USB cable
+    - Restart your computer
+
+    **On macOS:**
+    - Check Disk Utility for an unmounted drive
+    - Try a different USB port
+    - Use a data cable, not a charge-only cable
+
+    **On Linux:**
+    - Run `lsusb` and look for "Raspberry Pi RP2 Boot"
+    - Check `dmesg` for mount errors
+    - Mount manually if needed: `sudo mount /dev/sdX /mnt`
+  </Accordion>
+  <Accordion title="BOOT button not working">
+    - Hold BOOT **before** connecting the USB cable
+    - Hold BOOT for the full 3 seconds while connecting
+    - Try a different USB cable
+    - Check that the BOOT button is physically functional
+  </Accordion>
+  <Accordion title="Firmware flash fails">
+    - Re-download the `.uf2` file to rule out corruption
+    - Ensure your computer has enough free disk space (firmware is ~500 KB)
+    - Do not rename the `.uf2` file before flashing
+    - Try copying via the command line instead of drag-and-drop
+  </Accordion>
+  <Accordion title="Adapter not working after flash">
+    - Verify you flashed the correct firmware file for your product
+    - Try reflashing the firmware
+    - Check all cable connections to the console
+    - Test with a known-good USB controller
+    - Check the adapter LED status
+  </Accordion>
+</AccordionGroup>
+
+## Getting help
+
+- **Discord**: [community.joypad.ai](http://community.joypad.ai/) — community support
+- **GitHub Issues**: [github.com/joypad-ai/joypad-os/issues](https://github.com/joypad-ai/joypad-os/issues) — bug reports
+- **Email**: support@joypad.ai — product support

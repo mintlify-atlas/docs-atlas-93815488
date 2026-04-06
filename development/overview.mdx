@@ -1,0 +1,189 @@
+---
+title: "Developer Overview"
+description: "A guide to extending Joypad OS by adding apps, USB and Bluetooth device drivers, input interfaces, and output interfaces."
+---
+
+Joypad OS is firmware for RP2040, ESP32-S3, and nRF52840 microcontrollers that converts between controller protocols. The codebase is organized into discrete, replaceable layers. This guide explains what each layer is and how to extend it.
+
+## Prerequisites
+
+You must be able to build and flash existing firmware before writing new code. Verify your environment first:
+
+```bash
+# One-time setup (macOS)
+brew install --cask gcc-arm-embedded cmake git
+
+# Clone and initialize submodules
+git clone https://github.com/joypad-ai/joypad-os.git
+cd joypad-os
+make init
+
+# Build an existing app to confirm the toolchain works
+make usb2gc_kb2040
+```
+
+See the [build guide](/getting-started/building) for Linux and Windows setup, and for flashing instructions.
+
+## Repository layout
+
+```
+src/
+  apps/               App configurations — one directory per app
+  core/
+    buttons.h         JP_BUTTON_* constants (W3C Gamepad API order)
+    input_event.h     Unified input event structure (input_event_t)
+    input_interface.h InputInterface struct
+    output_interface.h OutputInterface struct
+    router/           Input→output routing (router.c / router.h)
+    services/         Players, profiles, storage, LEDs, hotkeys, codes
+  usb/
+    usbh/             USB host — HID parsing and vendor device drivers
+    usbd/             USB device output (HID, XInput, PS3/4, Switch)
+  bt/
+    bthid/            Bluetooth HID device drivers
+    btstack/          BTstack host integration
+    transport/        BT transport (Pico W CYW43, ESP32)
+  native/
+    host/             Native controller reading (SNES, N64, GC, LodgeNet)
+    device/           Console output protocols (GameCube, Dreamcast, etc.)
+  platform/           Platform HAL (RP2040, ESP32, nRF52840)
+  lib/                External libraries (TinyUSB, BTstack, pico-sdk, joybus-pio)
+esp/                  ESP32-S3 build directory (ESP-IDF)
+nrf/                  nRF52840 build directory (nRF Connect SDK / Zephyr)
+```
+
+## What you can extend
+
+<CardGroup cols={2}>
+  <Card title="Apps" icon="grid" href="/development/adding-app">
+    An app wires one or more input interfaces to one or more output interfaces and configures the router. Add an app when you need a new input→output combination.
+  </Card>
+  <Card title="USB device drivers" icon="usb" href="/development/usb-driver">
+    A USB device driver parses raw HID reports from a specific controller and normalizes them to `input_event_t`. Add one when generic HID parsing is insufficient for a controller.
+  </Card>
+  <Card title="Bluetooth device drivers" icon="bluetooth" href="/development/bluetooth-driver">
+    Same role as a USB device driver, but receives reports from BTstack instead of TinyUSB. Add one for controllers that require vendor-specific initialization or report parsing over BT.
+  </Card>
+  <Card title="Input interfaces" icon="gamepad" href="/development/input-interface">
+    An input interface encapsulates a whole input subsystem — a new bus type, a new native protocol, or any source that cannot be expressed as a single device driver.
+  </Card>
+  <Card title="Output interfaces" icon="monitor" href="/development/output-interface">
+    An output interface implements a console output protocol, typically using RP2040 PIO state machines for timing-critical signaling.
+  </Card>
+</CardGroup>
+
+## Data flow
+
+Every input, regardless of source, flows through the same path:
+
+```
+Input source
+    │
+    ▼
+router_submit_input(const input_event_t*)   ← called by every driver
+    │
+    ▼
+Router (SIMPLE / MERGE / BROADCAST)
+    │
+    ▼
+profile_apply()   ← button remapping, analog scaling
+    │
+    ▼
+router_get_output(output_target_t, player_id)   ← called by output
+    │
+    ▼
+Console / USB device output
+```
+
+The router and profile system are always in the middle. Input code calls `router_submit_input()`. Output code calls `router_get_output()`. No input driver ever talks directly to an output driver.
+
+## Key types
+
+### input_event_t
+
+Defined in `src/core/input_event.h`. Every input driver fills one of these and passes it to `router_submit_input()`:
+
+```c
+typedef struct {
+    uint8_t dev_addr;             // USB: 1-127, BT: conn_index, Native: 0xD0+port
+    int8_t instance;              // Instance number for multi-device controllers
+    input_device_type_t type;     // INPUT_TYPE_GAMEPAD, MOUSE, KEYBOARD, etc.
+    input_transport_t transport;  // INPUT_TRANSPORT_USB, BT_CLASSIC, BT_BLE, NATIVE
+    controller_layout_t layout;   // Physical button layout (for 6-button controllers)
+    uint32_t buttons;             // Button bitmap (JP_BUTTON_* constants)
+    uint8_t analog[ANALOG_COUNT]; // [LX, LY, RX, RY, L2, R2, RZ] — 0-255, sticks center at 128
+    int8_t delta_x, delta_y;      // Mouse relative motion
+    int8_t delta_wheel;
+    // … motion, pressure, touch, battery fields
+} input_event_t;
+```
+
+### InputInterface
+
+Defined in `src/core/input_interface.h`. Apps declare an array of these to specify which input sources they use:
+
+```c
+typedef struct {
+    const char* name;
+    input_source_t source;
+    void (*init)(void);
+    void (*task)(void);
+    bool (*is_connected)(void);
+    uint8_t (*get_device_count)(void);
+} InputInterface;
+```
+
+### OutputInterface
+
+Defined in `src/core/output_interface.h`. Apps declare an array of these to specify output targets:
+
+```c
+typedef struct {
+    const char* name;
+    output_target_t target;
+    void (*init)(void);
+    void (*task)(void);
+    void (*core1_task)(void);
+    bool (*get_feedback)(output_feedback_t* fb);
+    uint8_t (*get_rumble)(void);
+    uint8_t (*get_player_led)(void);
+    uint8_t (*get_profile_count)(void);
+    uint8_t (*get_active_profile)(void);
+    void (*set_active_profile)(uint8_t index);
+    const char* (*get_profile_name)(uint8_t index);
+    uint8_t (*get_trigger_threshold)(void);
+} OutputInterface;
+```
+
+## Common pitfalls
+
+<AccordionGroup>
+  <Accordion title="GameCube requires 130 MHz">
+    The joybus PIO program requires the system clock to be exactly 130 MHz. Call `set_sys_clock_khz(130000, true)` **before** any PIO initialization. This is already done in `ngc_init()` in `src/native/device/gamecube/gamecube_device.c`.
+  </Accordion>
+  <Accordion title="PIO 32-instruction limit">
+    Each PIO program is limited to 32 instructions and shares instruction memory with all other programs loaded in the same PIO block. Optimize aggressively or split logic across two state machines. CYW43 uses PIO1 on Pico W, so PIO-USB and your programs must live in PIO0.
+  </Accordion>
+  <Accordion title="__not_in_flash_func for Core 1">
+    Core 1 runs timing-critical output code. Any function called from Core 1 must be marked `__not_in_flash_func` to ensure it lives in SRAM, not flash. On RP2350 (Pico 2 W), Core 0's CYW43 driver periodically locks flash — unmarked functions called from Core 1 will hard-fault.
+  </Accordion>
+  <Accordion title="Y-axis convention">
+    All `input_event_t` values use HID convention: **0 = up, 128 = center, 255 = down**. Sony, Xbox, and 8BitDo controllers already use this convention natively. Nintendo controllers (GameCube, N64, SNES) use the opposite: 0 = down, 255 = up. Invert Y when reading native Nintendo controllers.
+
+    ```c
+    uint8_t stick_y = 255 - report.stick_y;  // Invert GC/N64 Y-axis
+    ```
+  </Accordion>
+  <Accordion title="ESP32: tud_task blocks forever">
+    On FreeRTOS (ESP32-S3), `tud_task()` is equivalent to `tud_task_ext(UINT32_MAX, false)` — it blocks indefinitely. Always use `tud_task_ext(1, false)` instead. Blocking in the USB task starves other FreeRTOS tasks.
+  </Accordion>
+  <Accordion title="BTstack threading">
+    All BTstack API calls (`gap_*`, `hid_host_*`, etc.) must be made from the BTstack task or thread. On RP2040, BTstack runs on Core 0 in a cooperative event loop. On ESP32 and nRF52840, it runs in its own FreeRTOS task or Zephyr thread respectively. Classic BT APIs must be guarded:
+
+    ```c
+    #ifndef BTSTACK_USE_ESP32
+    gap_inquiry_start(INQUIRY_DURATION);
+    #endif
+    ```
+  </Accordion>
+</AccordionGroup>

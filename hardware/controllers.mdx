@@ -1,0 +1,239 @@
+---
+title: "Supported controllers"
+description: "Complete list of USB, Bluetooth, and native controllers supported by Joypad OS."
+---
+
+Joypad OS supports a wide range of USB and Bluetooth controllers, keyboards, mice, and natively-wired retro controllers. Most standard USB HID gamepads work out of the box.
+
+## USB controllers
+
+### Xbox
+
+- Xbox Original (Duke / S-Controller)
+- Xbox 360 (wired and wireless with receiver adapter)
+- Xbox One (all revisions)
+- Xbox Series X|S
+
+All Xbox controllers support full button and analog input, rumble feedback, and use the XInput protocol.
+
+---
+
+### PlayStation
+
+- PlayStation Classic Controller
+- DualShock 3 (PS3)
+- DualShock 4 (PS4)
+- DualSense (PS5)
+
+<CardGroup cols={2}>
+  <Card title="Rumble" icon="circle-check">
+    DS3, DS4, and DualSense all support rumble feedback.
+  </Card>
+  <Card title="Touchpad" icon="circle-check">
+    DS4 and DualSense touchpad button is mapped.
+  </Card>
+</CardGroup>
+
+DualSense adaptive trigger thresholds are supported. The touchpad acts as a button (not a pointer).
+
+---
+
+### Nintendo
+
+| Controller | Notes |
+|-----------|-------|
+| Switch Pro Controller | Full support with rumble |
+| Switch 2 Pro Controller | Full support |
+| Joy-Con Grip | Dual Joy-Cons in grip mode |
+| Joy-Con Single | Individual left or right Joy-Con |
+| GameCube Adapter | Official Nintendo GameCube USB adapter (4 ports) |
+| NSO GameCube Controller | Nintendo Switch Online GameCube controller |
+
+All Nintendo USB controllers support full button and analog input. The Pro Controller supports rumble. Home and Capture buttons are mapped.
+
+---
+
+### 8BitDo
+
+**Wireless controllers (USB receiver):**
+- PCEngine 2.4g Controller
+- M30 2.4g Controller (Genesis/Mega Drive layout)
+- NeoGeo Controller
+
+**USB adapters:**
+- Wireless USB Adapter (Grey/Red)
+- Wireless USB Adapter 2 (Black/Red)
+
+Features include full button support, analog triggers on the M30, turbo functionality, and mode switching.
+
+---
+
+### Other supported controllers
+
+| Controller | Notes |
+|-----------|-------|
+| Logitech Wingman Action Pad | Classic PC gamepad |
+| Sega Astro City Mini Controller | Arcade stick |
+| Hori Pokken Tournament Controller | Fight stick |
+| Hori Horipad | Generic Hori gamepads |
+| Google Stadia Controller | USB mode |
+| Generic DirectInput controllers | Most D-input gamepads |
+| Generic HID gamepads | Standard USB HID joysticks |
+
+<Info>
+  Most USB gamepads that follow the standard HID specification work without a dedicated driver. If your controller shows up as a USB HID gamepad on Windows or macOS, it will likely work.
+</Info>
+
+---
+
+## USB keyboards
+
+All standard USB HID keyboards are supported. Key mapping to controller buttons:
+
+| Key | Mapped to |
+|-----|-----------|
+| Arrow keys | D-pad |
+| WASD | Left analog stick |
+| Space / Enter | Action buttons |
+| Scroll Lock / F14 | GameCube keyboard mode toggle |
+
+**Tested keyboards**: Apple Magic Keyboard, Logitech K120/K380, generic USB keyboards, mechanical keyboards (Cherry MX and others).
+
+---
+
+## USB mice
+
+All standard USB HID mice are supported, including optical, laser, gaming (high DPI), and trackballs.
+
+**Console-specific mouse behavior:**
+
+| Console | Behavior |
+|---------|---------|
+| PCEngine | Mouse emulation (Afterburner II, Darius Plus) |
+| Nuon | Spinner emulation (Tempest 3000) |
+| 3DO | Native 3DO mouse protocol |
+| GameCube | Mouse movement mapped to analog stick |
+
+<Note>
+  Scroll wheel input is ignored. Extra mouse buttons (buttons 4 and above) are not mapped.
+</Note>
+
+---
+
+## USB hubs
+
+USB hubs enable multi-player support from a single board.
+
+| Console | Max simultaneous devices |
+|---------|------------------------|
+| 3DO | 8 |
+| PCEngine | 5 |
+| Loopy | 4 |
+| GameCube | 4 |
+| Dreamcast | 4 |
+
+**Tested hubs**: Anker 4-Port USB 3.0 Hub, Amazon Basics 7-Port USB Hub, generic USB 2.0 hubs.
+
+<Warning>
+  Use a powered USB hub for 3 or more high-power devices (controllers with rumble, RGB peripherals). Total current draw must stay within USB spec. Unpowered hubs will brownout with 3+ rumble controllers.
+</Warning>
+
+---
+
+## Bluetooth controllers
+
+Bluetooth controllers connect via USB Bluetooth dongles on RP2040 boards, or via built-in radio on Pico W, Pico 2 W, ESP32-S3, and nRF52840.
+
+### Classic BT + BLE (Pico W / Pico 2 W / USB dongle)
+
+| Controller | Status |
+|-----------|--------|
+| DualShock 3 (PS3) | Supported (with rumble) |
+| DualShock 4 (PS4) | Supported (with rumble, touchpad) |
+| DualSense (PS5) | Supported (with rumble) |
+| Switch Pro Controller | Supported (with rumble) |
+| Switch 2 Pro Controller | Supported |
+| Wii U Pro Controller | Supported |
+| NSO GameCube | Supported |
+| Xbox One / Series (BT mode) | Supported |
+| Google Stadia | Supported |
+| Generic BT HID | Basic support |
+
+### BLE only (ESP32-S3 / nRF52840)
+
+| Controller | Status |
+|-----------|--------|
+| Xbox One / Series (BLE mode) | Supported |
+| 8BitDo controllers (BLE mode) | Supported |
+| Switch 2 Pro (BLE) | Supported |
+| Generic BLE HID gamepads | Supported |
+
+<Warning>
+  Classic BT controllers (DS3, DS4, DualSense, Switch Pro, Wii U Pro) require the Pico W, Pico 2 W, or a USB Bluetooth dongle. They do not work on ESP32-S3 or nRF52840, which are BLE only.
+</Warning>
+
+---
+
+### Bluetooth dongles
+
+Only dongles with firmware stored in ROM work on embedded hardware. Most BT 5.0+ dongles use Realtek chips that require host-side firmware loading and **will not work**.
+
+<Tabs>
+  <Tab title="Supported chipsets">
+    | Chipset | Notes |
+    |---------|-------|
+    | Broadcom (BCM20702A0) | Firmware in ROM — recommended |
+    | CSR / Cambridge Silicon Radio (CSR8510 A10) | Firmware in ROM — works, but beware counterfeits |
+    | Barrot BR8654A02 | Firmware in ROM |
+  </Tab>
+  <Tab title="Not supported">
+    | Chipset | Reason |
+    |---------|--------|
+    | Realtek RTL8761B | Requires firmware loading at every boot — not implemented |
+    | Realtek RTL8761BU | Same as above |
+    | Most BT 5.0+ dongles | Almost all use Realtek chips |
+  </Tab>
+  <Tab title="Tested and working">
+    | Dongle | Chipset |
+    |--------|---------|
+    | Kinivo BTD-400 | Broadcom BCM20702A0 — recommended |
+    | Panda PBU40 | Broadcom BCM20702A0 — recommended |
+    | ASUS USB-BT400 | Broadcom BCM20702 |
+    | Adafruit Bluetooth 4.0 USB Module #1327 | CSR8510 A10 |
+    | UGREEN Bluetooth 6.0 USB Adapter | Barrot BR8654A02 |
+    | Amazon Basics BT 4.0 | Unknown Chinese chip |
+  </Tab>
+  <Tab title="Known not working">
+    | Dongle | Reason |
+    |--------|--------|
+    | TP-Link UB400 / UB500 | Realtek RTL8761B |
+    | ASUS USB-BT500 | Realtek RTL8761B |
+    | UGREEN BT 5.0 adapters | Realtek |
+    | Avantree DG45 | Realtek |
+    | Zexmte BT 5.0 | Realtek |
+  </Tab>
+</Tabs>
+
+**Buying tips:**
+- Look for BT 4.0 dongles with Broadcom chips
+- Kinivo BTD-400 and Panda PBU40 are safe choices (~$12)
+- Avoid random "CSR8510" listings — many are counterfeit clones with pairing issues
+- BT 5.0+ dongles are almost all Realtek — avoid for embedded use
+
+<Note>
+  Bluetooth adds slight latency compared to wired USB. For competitive play, wired is recommended.
+</Note>
+
+---
+
+## Native controllers
+
+Native controllers connect directly to GPIO pins on the board using their original console protocol — no USB involved.
+
+| Controller | Protocol | Adapter |
+|-----------|---------|---------|
+| SNES / NES | Shift register (serial) | `snes2usb` |
+| N64 | Joybus (single-wire) | `n642usb`, `n642dc` |
+| GameCube | Joybus (single-wire) | `gc2usb` |
+
+See the [Wiring Guide](/hardware/wiring) for GPIO pin assignments and connector diagrams for each native controller type.

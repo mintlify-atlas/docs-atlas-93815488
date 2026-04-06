@@ -1,0 +1,205 @@
+---
+title: "RP2040 Platform"
+description: "The primary platform for Joypad OS. Supports all console adapters, USB host and device, Bluetooth, WiFi, and native controller protocols via PIO."
+---
+
+The RP2040 is the primary target for Joypad OS. All 30+ apps build against it using the pico-sdk. It provides bare-metal dual-core execution with PIO (Programmable I/O) for cycle-accurate console protocol timing — the hardware feature that makes GameCube, Dreamcast, PCEngine, and other retro console protocols possible.
+
+## Supported boards
+
+| Board | ID suffix | USB host | Wireless | Notes |
+|---|---|---|---|---|
+| Adafruit KB2040 | `_kb2040` | Yes | Via dongle | Default board for most console adapter apps |
+| Raspberry Pi Pico | `_pico` | Yes | No | Standard RP2040 reference board |
+| Raspberry Pi Pico W | `_pico_w` | Yes | Classic BT + BLE + WiFi | CYW43 radio via SPI over PIO1 |
+| Raspberry Pi Pico 2 W | `_pico2_w` | Yes | Classic BT + BLE + WiFi | RP2350, 520KB RAM, flash-contention caution |
+| Waveshare RP2040-Zero | `_rp2040zero` | Yes | Via dongle | Compact form factor |
+| Adafruit Feather RP2040 USB Host | `_feather` | Yes (built-in USB-A) | Via dongle | Built-in USB host port |
+| Adafruit MacroPad RP2040 | `_macropad` | No | No | 12-key + rotary encoder |
+
+Build targets follow the pattern `make <app>_<board>` — for example, `make usb2gc_kb2040` or `make bt2usb_pico_w`.
+
+## Build setup
+
+### Prerequisites
+
+<Tabs>
+  <Tab title="macOS">
+    ```bash
+    brew install --cask gcc-arm-embedded cmake git
+    ```
+
+    <Warning>
+      Do **not** use `brew install arm-none-eabi-gcc`. That package is missing newlib and the build will fail.
+    </Warning>
+  </Tab>
+  <Tab title="Linux (Debian/Ubuntu)">
+    ```bash
+    sudo apt update
+    sudo apt install cmake gcc-arm-none-eabi libnewlib-arm-none-eabi \
+                     build-essential git python3
+    ```
+  </Tab>
+  <Tab title="Windows">
+    Install via [Chocolatey](https://chocolatey.org/install) in an elevated PowerShell:
+
+    ```powershell
+    choco install make gcc-arm-embedded git
+    ```
+
+    Then add Git Unix tools to your PATH so `make` can call `rm` and other POSIX utilities:
+
+    ```powershell
+    [Environment]::SetEnvironmentVariable(
+      "Path",
+      $env:Path + ";C:\Program Files\Git\usr\bin",
+      "User"
+    )
+    ```
+
+    Restart PowerShell after making PATH changes.
+  </Tab>
+</Tabs>
+
+### One-time setup
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/joypad-ai/joypad-os.git
+    cd joypad-os
+    ```
+  </Step>
+  <Step title="Initialize submodules">
+    ```bash
+    make init
+    ```
+
+    This pulls all dependencies into `src/lib/`: pico-sdk 2.2.0, TinyUSB 0.19.0, BTstack, joybus-pio, and tusb_xinput.
+  </Step>
+</Steps>
+
+## Build commands
+
+```bash
+# Build a specific app for a specific board
+make usb2gc_kb2040          # USB/BT → GameCube, KB2040
+make usb2pce_kb2040         # USB/BT → PCEngine, KB2040
+make usb2dc_kb2040          # USB/BT → Dreamcast, KB2040
+make usb23do_rp2040zero     # USB/BT → 3DO, RP2040-Zero
+make usb2usb_feather        # USB/BT → USB HID, Feather USB Host
+make bt2usb_pico_w          # BT/BLE → USB HID, Pico W
+make snes2usb_kb2040        # SNES controller → USB HID, KB2040
+make n642usb_kb2040         # N64 controller → USB HID, KB2040
+make gc2usb_kb2040          # GameCube controller → USB HID, KB2040
+
+# Build all RP2040 targets
+make all
+
+# Clean build artifacts
+make clean
+```
+
+Output files land in `releases/joypad_<commit>_<app>_<board>.uf2`.
+
+### Flashing
+
+<Steps>
+  <Step title="Enter bootloader mode">
+    Hold **BOOTSEL** while connecting USB, or double-tap the reset button on boards that support it. A USB drive appears — `RPI-RP2` for RP2040 boards, `RP2350` for RP2350.
+  </Step>
+  <Step title="Flash via make (macOS)">
+    ```bash
+    make flash-usb2gc_kb2040    # Copies to /Volumes/RPI-RP2 automatically
+    ```
+  </Step>
+  <Step title="Flash manually">
+    Drag and drop the `.uf2` file from `releases/` onto the mounted drive. It ejects automatically when complete.
+  </Step>
+</Steps>
+
+## Dual-core execution
+
+The RP2040's two cores have distinct responsibilities:
+
+| Core | Responsibilities |
+|---|---|
+| **Core 0** | USB host polling, Bluetooth (CYW43 on Pico W), input processing, router, services, `app_task()` |
+| **Core 1** | Timing-critical console output — PIO program management, joybus/maple/polyface response loops |
+
+Core 1 code must be placed in RAM to avoid XIP flash cache misses during time-critical protocol responses. Use `__not_in_flash_func` for all Core 1 functions:
+
+```c
+void __not_in_flash_func(gamecube_core1_entry)(void) {
+    // This runs on Core 1 from RAM — safe for tight timing loops
+}
+```
+
+<Warning>
+  On Pico 2 W (RP2350), the CYW43 driver on Core 0 periodically locks flash for BT bond storage. Any Core 1 function that isn't RAM-resident will hang during that window. All Core 1 code must use only inline or RAM-resident calls.
+</Warning>
+
+## PIO (Programmable I/O)
+
+PIO is what makes console protocol support possible. Each PIO block has 32 instruction slots shared across 4 state machines. Console protocols use PIO for sub-microsecond timing:
+
+| Protocol | PIO programs | Clock |
+|---|---|---|
+| GameCube Joybus | `joybus.pio` (22 instructions) | **130MHz** (overclock required) |
+| Dreamcast Maple | `maple.pio` (~20 instructions) | 125MHz |
+| PCEngine | `plex.pio` + `clock.pio` + `select.pio` (~24 total) | 125MHz |
+| Nuon Polyface | `polyface_read.pio` + `polyface_send.pio` (~20 total) | 125MHz |
+| 3DO PBUS | `sampling.pio` + `output.pio` (~20 total) | 125MHz |
+| LodgeNet | `lodgenet.pio` (~25 total) | 125MHz (div 125 = 1µs) |
+| NeoPixel LED | `ws2812.pio` (4 instructions) | 125MHz |
+
+### PIO resource conflicts
+
+PIO block and state machine assignment matters. Three subsystems compete for PIO resources:
+
+- **CYW43** (Pico W Bluetooth) claims **PIO1**
+- **PIO-USB** uses **PIO0** when CYW43 is active
+- **NeoPixel** always claims a PIO0 state machine — this conflicts with PIO-USB
+
+<Note>
+  GameCube joybus timing requires a 130MHz system clock. Set it explicitly at startup:
+
+  ```c
+  set_sys_clock_khz(130000, true);
+  ```
+
+  Joybus protocol timing fails at the default 125MHz.
+</Note>
+
+## Bluetooth
+
+### Pico W / Pico 2 W (CYW43)
+
+Pico W boards include a CYW43 WiFi+Bluetooth combo radio. Joypad OS uses BTstack for both Classic Bluetooth and BLE:
+
+- **Classic BT**: DualShock 3/4, Switch Pro, Wiimote, 8BitDo (Classic mode)
+- **BLE**: DualSense, Xbox Series, 8BitDo (BLE mode), modern controllers
+- **Transport**: `bt_transport_cyw43.c` — SPI communication over PIO1
+
+The Pico W also supports WiFi via the CYW43 radio for the JOCP (Joypad Open Controller Protocol) input interface.
+
+### Non-W Pico boards (USB dongle)
+
+Non-W RP2040 boards have no built-in wireless. Bluetooth works via a USB Bluetooth dongle connected to the USB host port. The same BTstack codebase handles both transport paths.
+
+## Development tips
+
+<CardGroup cols={2}>
+  <Card title="PIO instruction limit" icon="microchip">
+    Each PIO program must fit in 32 instruction slots per block. Optimize or split programs that approach this limit. Use `pio_get_default_sm_config()` to validate at build time.
+  </Card>
+  <Card title="Flash-resident code on Core 1" icon="triangle-exclamation">
+    Any function called from Core 1 must use `__not_in_flash_func`. Forgetting this causes subtle timing glitches or hangs on RP2350 with CYW43.
+  </Card>
+  <Card title="Y-axis normalization" icon="arrows-up-down">
+    All input drivers must normalize to HID standard: `0=up`, `128=center`, `255=down`. Nintendo controllers use the opposite convention and require inversion.
+  </Card>
+  <Card title="HCI handle sentinel" icon="shield">
+    In BLE, HCI connection handle `0x0000` is valid. Always use `HCI_CON_HANDLE_INVALID` (`0xFFFF`) as a sentinel — never `0`.
+  </Card>
+</CardGroup>

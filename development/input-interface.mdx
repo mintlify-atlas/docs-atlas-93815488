@@ -1,0 +1,270 @@
+---
+title: "Adding an Input Interface"
+description: "How to implement an InputInterface for a new input protocol or bus type and wire it into an app."
+---
+
+An input interface encapsulates a complete input subsystem — everything needed to initialize hardware, poll or receive data from one or more controllers, and deliver normalized `input_event_t` events to the router. Use an input interface (rather than a device driver) when:
+
+- You are adding support for a new hardware bus or protocol (e.g., a new native controller port).
+- The input source manages multiple devices internally and does not map cleanly to a single USB or BT device address.
+- The input source is not HID at all (e.g., a native joybus port, a custom I2C sensor).
+
+The existing USB host and Bluetooth subsystems are themselves input interfaces. Native controller readers — `gc_input_interface`, `snes_input_interface`, `n64_input_interface` — are the primary examples to follow.
+
+## File location
+
+```
+src/native/host/<protocol>/<protocol>_host.c
+src/native/host/<protocol>/<protocol>_host.h
+```
+
+Existing protocol directories: `gc/`, `n64/`, `snes/`, `nes/`, `3do/`, `arcade/`, `lodgenet/`, `uart/`.
+
+## The InputInterface struct
+
+Defined in `src/core/input_interface.h`:
+
+```c
+typedef struct {
+    const char* name;                   // Human-readable name (e.g., "GC", "SNES")
+    input_source_t source;              // Router source type (INPUT_SOURCE_NATIVE_*)
+
+    void (*init)(void);                 // Initialize hardware and protocol
+    void (*task)(void);                 // Core 0 polling task (NULL if not needed)
+
+    // Optional status callbacks
+    bool (*is_connected)(void);         // Any device connected? (NULL = always true)
+    uint8_t (*get_device_count)(void);  // Number of connected devices (NULL = unknown)
+} InputInterface;
+```
+
+All six fields are used. The optional callbacks can be `NULL` if not applicable.
+
+## Adding an INPUT_SOURCE constant
+
+Before implementing the interface, add your protocol's source constant to the `input_source_t` enum in `src/core/router/router.h`:
+
+```c
+typedef enum {
+    INPUT_SOURCE_USB_HOST,
+    INPUT_SOURCE_BLE_CENTRAL,
+    INPUT_SOURCE_WIFI,
+    INPUT_SOURCE_NATIVE_NES,
+    INPUT_SOURCE_NATIVE_SNES,
+    INPUT_SOURCE_NATIVE_N64,
+    INPUT_SOURCE_NATIVE_GC,
+    INPUT_SOURCE_NATIVE_3DO,
+    INPUT_SOURCE_NATIVE_ARCADE,
+    INPUT_SOURCE_NATIVE_LODGENET,
+    INPUT_SOURCE_NATIVE_NUON,
+    INPUT_SOURCE_NATIVE_MYPROTOCOL,   // Add your constant here
+    INPUT_SOURCE_GPIO,
+    INPUT_SOURCE_SENSORS,
+    INPUT_SOURCE_I2C_PEER,
+} input_source_t;
+```
+
+## Implementing the interface
+
+The GameCube host driver (`src/native/host/gc/gc_host.c`) is the reference implementation. Study it before writing your own.
+
+### init
+
+Initialize the hardware — set up GPIO pins, load PIO programs, configure polling state. Called once during app startup.
+
+```c
+void myproto_host_init(void)
+{
+    if (initialized) return;
+
+    printf("[myproto] Initializing on GPIO%d at %dHz\n",
+           MYPROTO_PIN_DATA, MYPROTO_POLLING_RATE);
+
+    // Example: configure GPIO with pull-up for open-drain protocol
+    gpio_init(MYPROTO_PIN_DATA);
+    gpio_set_dir(MYPROTO_PIN_DATA, GPIO_IN);
+    gpio_pull_up(MYPROTO_PIN_DATA);
+
+    // Initialize PIO-based protocol library (example)
+    MyProtoController_init(&controllers[0], MYPROTO_PIN_DATA,
+                           MYPROTO_POLLING_RATE, pio0, -1, -1);
+
+    initialized = true;
+}
+```
+
+### task
+
+Called repeatedly from the Core 0 main loop. Poll the controller hardware, read the current state, build an `input_event_t`, and call `router_submit_input()`.
+
+<Warning>
+  Device addresses for native controllers must be in the **0xD0+ range** to avoid collisions with USB device addresses (1–127) and Bluetooth connection indices. Use `0xD0 + port` as the `dev_addr`.
+</Warning>
+
+```c
+void myproto_host_task(void)
+{
+    if (!initialized) return;
+
+    for (int port = 0; port < MYPROTO_MAX_PORTS; port++) {
+        myproto_report_t report;
+        bool success = MyProtoController_Poll(&controllers[port], &report);
+        if (!success) continue;
+
+        // Map protocol buttons to JP_BUTTON_*
+        uint32_t buttons = 0;
+        if (report.a)     buttons |= JP_BUTTON_B2;  // GC A → B2
+        if (report.b)     buttons |= JP_BUTTON_B1;  // GC B → B1
+        if (report.x)     buttons |= JP_BUTTON_B4;
+        if (report.y)     buttons |= JP_BUTTON_B3;
+        if (report.start) buttons |= JP_BUTTON_S2;
+        if (report.z)     buttons |= JP_BUTTON_R1;
+        if (report.l)     buttons |= JP_BUTTON_L2;
+        if (report.r)     buttons |= JP_BUTTON_R2;
+        if (report.dup)   buttons |= JP_BUTTON_DU;
+        if (report.ddown) buttons |= JP_BUTTON_DD;
+        if (report.dleft) buttons |= JP_BUTTON_DL;
+        if (report.dright)buttons |= JP_BUTTON_DR;
+
+        // Build input event
+        input_event_t event;
+        init_input_event(&event);
+
+        event.dev_addr = 0xD0 + port;  // 0xD0+ range for native controllers
+        event.instance = 0;
+        event.type = INPUT_TYPE_GAMEPAD;
+        event.transport = INPUT_TRANSPORT_NATIVE;
+        event.buttons = buttons;
+
+        // Analog axes — normalize to 0-255 with 128 center
+        // If your protocol uses 0=down/255=up (Nintendo style), invert Y:
+        event.analog[ANALOG_LX] = report.stick_x;
+        event.analog[ANALOG_LY] = 255 - report.stick_y;  // Invert Nintendo Y
+        event.analog[ANALOG_RX] = report.cstick_x;
+        event.analog[ANALOG_RY] = 255 - report.cstick_y; // Invert Nintendo Y
+        event.analog[ANALOG_L2] = report.l_analog;
+        event.analog[ANALOG_R2] = report.r_analog;
+
+        router_submit_input(&event);
+    }
+}
+```
+
+### Y-axis inversion
+
+All `input_event_t` analog values must use HID convention: **0 = up, 128 = center, 255 = down**.
+
+| Protocol | Y-axis convention | Action required |
+|---|---|---|
+| USB HID (Sony, Xbox, 8BitDo) | 0 = up, 255 = down | None — matches internal convention |
+| GameCube (GC, N64) | 0 = down, 255 = up | Invert: `255 - report.stick_y` |
+| SNES | Digital only | N/A |
+
+The GC host driver inverts Y exactly this way in `src/native/host/gc/gc_host.c`:
+
+```c
+uint8_t stick_y = 255 - report.stick_y;  // Invert Y for HID convention
+```
+
+### is_connected and get_device_count
+
+Optional but recommended. These are called by services (player management, LEDs) to determine whether any controllers are active.
+
+```c
+bool myproto_host_is_connected(void)
+{
+    if (!initialized) return false;
+    for (int i = 0; i < MYPROTO_MAX_PORTS; i++) {
+        if (MyProtoController_IsInitialized(&controllers[i])) return true;
+    }
+    return false;
+}
+
+static uint8_t myproto_get_device_count(void)
+{
+    uint8_t count = 0;
+    for (int i = 0; i < MYPROTO_MAX_PORTS; i++) {
+        if (MyProtoController_IsInitialized(&controllers[i])) count++;
+    }
+    return count;
+}
+```
+
+## Declaring the interface
+
+Declare the `InputInterface` as a `const` global at the bottom of your `.c` file and expose it in the header:
+
+```c
+// myproto_host.c
+const InputInterface myproto_input_interface = {
+    .name             = "MyProto",
+    .source           = INPUT_SOURCE_NATIVE_MYPROTOCOL,
+    .init             = myproto_host_init,
+    .task             = myproto_host_task,
+    .is_connected     = myproto_host_is_connected,
+    .get_device_count = myproto_get_device_count,
+};
+```
+
+```c
+// myproto_host.h
+extern const InputInterface myproto_input_interface;
+```
+
+The GC host driver follows this pattern exactly in `src/native/host/gc/gc_host.c:287`:
+
+```c
+const InputInterface gc_input_interface = {
+    .name             = "GC",
+    .source           = INPUT_SOURCE_NATIVE_GC,
+    .init             = gc_host_init,
+    .task             = gc_host_task,
+    .is_connected     = gc_host_is_connected,
+    .get_device_count = gc_get_device_count,
+};
+```
+
+## Wiring into an app
+
+Add the interface to your app's `input_interfaces` array in `app.c`:
+
+```c
+#include "native/host/myproto/myproto_host.h"
+
+static const InputInterface* input_interfaces[] = {
+    &myproto_input_interface,
+};
+
+const InputInterface** app_get_input_interfaces(uint8_t* count)
+{
+    *count = sizeof(input_interfaces) / sizeof(input_interfaces[0]);
+    return input_interfaces;
+}
+```
+
+Then add the corresponding route in `app_init()`:
+
+```c
+router_add_route(INPUT_SOURCE_NATIVE_MYPROTOCOL, OUTPUT_TARGET_GAMECUBE, 0);
+```
+
+## Handling disconnect cleanly
+
+When a native controller disconnects, send a zeroed `input_event_t` to prevent stuck buttons. The GC host driver debounces this with 30 consecutive failed polls before declaring disconnect:
+
+```c
+// Send cleared input to prevent stuck buttons on disconnect
+input_event_t event;
+init_input_event(&event);
+event.dev_addr = 0xD0 + port;
+event.instance = 0;
+event.type = INPUT_TYPE_GAMEPAD;
+event.buttons = 0;
+event.analog[ANALOG_LX] = 128;
+event.analog[ANALOG_LY] = 128;
+event.analog[ANALOG_RX] = 128;
+event.analog[ANALOG_RY] = 128;
+event.analog[ANALOG_L2] = 0;
+event.analog[ANALOG_R2] = 0;
+router_submit_input(&event);
+```

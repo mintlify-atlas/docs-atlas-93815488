@@ -1,0 +1,304 @@
+---
+title: "Native input adapters"
+description: "Read retro controllers directly via GPIO and output to USB or bridge them to a different console — SNES, NES, N64, GameCube, Neo Geo, and more."
+---
+
+Native input adapter apps read retro controllers directly through GPIO pins rather than through a USB host port. They fall into two categories: **native-to-USB** adapters that convert retro controller output to a modern USB HID gamepad, and **cross-console bridges** that read one retro controller protocol and output a different retro console protocol.
+
+All native input apps require physical wiring between the microcontroller and the controller connector. See the [wiring guide](/hardware/wiring) for pinouts and connector details.
+
+## Native-to-USB adapters
+
+These apps read a retro controller over GPIO and output as a standard USB HID gamepad (with the same multi-mode output as `usb2usb`).
+
+| App | Input | Board | Build command |
+|-----|-------|-------|---------------|
+| `snes2usb` | SNES / NES controller | KB2040 | `make snes2usb_kb2040` |
+| `n642usb` | N64 controller | KB2040 | `make n642usb_kb2040` |
+| `gc2usb` | GameCube controller | KB2040 | `make gc2usb_kb2040` |
+| `nes2usb` | NES controller | KB2040, Pico W | `make nes2usb_kb2040` |
+| `neogeo2usb` | Neo Geo arcade stick | KB2040, RP2040-Zero | `make neogeo2usb_kb2040` |
+
+---
+
+### SNES to USB — `snes2usb`
+
+Reads a native SNES or NES controller via GPIO shift register polling and outputs as a USB HID gamepad. Also detects SNES mouse and Xband keyboard automatically.
+
+**Button mapping:**
+
+| SNES button | USB output |
+|-------------|------------|
+| B | B1 |
+| A | B2 |
+| Y | B3 |
+| X | B4 |
+| L | L1 |
+| R | R1 |
+| Select | S1 |
+| Start | S2 |
+| D-Pad | D-Pad |
+
+**Key features:**
+- Auto-detects SNES controller, NES controller, SNES mouse, and Xband keyboard
+- USB output modes: SInput, XInput, PS3, PS4, Switch, Keyboard/Mouse
+- Web configuration at [config.joypad.ai](https://config.joypad.ai)
+
+**Supported boards:**
+
+| Board | Build command |
+|-------|---------------|
+| KB2040 | `make snes2usb_kb2040` |
+
+```bash
+make snes2usb_kb2040
+make flash-snes2usb_kb2040
+```
+
+---
+
+### N64 to USB — `n642usb`
+
+Reads a native N64 controller via the joybus single-wire PIO protocol on GPIO 29 and outputs as a USB HID gamepad. Detects and supports the N64 rumble pak for vibration feedback. Ships with two button mapping profiles.
+
+**Default profile button mapping:**
+
+| N64 button | USB output |
+|------------|------------|
+| A | B1 |
+| C-Down | B2 |
+| B | B3 |
+| C-Left | B4 |
+| L | L1 |
+| R | R1 |
+| Z | L2 |
+| C-Up | L3 |
+| C-Right | R3 |
+| Start | S2 |
+| D-Pad | D-Pad |
+| Stick | Left analog |
+
+**Profiles:**
+
+| Profile | Description |
+|---------|-------------|
+| **Default** | A=B1, C-Down=B2, B=B3, C-Left=B4. C-buttons map to face buttons. |
+| **Dual stick** | C-buttons map to right analog stick instead of face buttons. |
+
+**Key features:**
+- Full analog stick support with proper range scaling
+- N64 rumble pak detected and used for vibration feedback from USB host
+- USB output modes: SInput, XInput, PS3, PS4, Switch, Keyboard/Mouse
+- Data pin: GPIO 29
+
+**Supported boards:**
+
+| Board | Build command |
+|-------|---------------|
+| KB2040 | `make n642usb_kb2040` |
+
+```bash
+make n642usb_kb2040
+make flash-n642usb_kb2040
+```
+
+---
+
+### GameCube to USB — `gc2usb`
+
+Reads a native GameCube controller via the joybus single-wire PIO protocol on GPIO 29, polled at 125Hz (the native GameCube rate). Outputs as a USB HID gamepad with full analog support. Ships with three button mapping profiles.
+
+**Default profile button mapping:**
+
+| GC button | USB output |
+|-----------|------------|
+| A | B1 |
+| B | B2 |
+| X | B3 |
+| Y | B4 |
+| L | L1 |
+| R | R1 |
+| Z | R2 |
+| Start | S2 |
+| D-Pad | D-Pad |
+| Main stick | Left analog |
+| C-Stick | Right analog |
+| L trigger | L2 (analog) |
+| R trigger | R2 (analog) |
+
+**Profiles:**
+
+| Profile | Description |
+|---------|-------------|
+| **Default** | Standard mapping: A=B1, B=B2, X=B3, Y=B4, Z=R2. Triggers map to L2/R2 analog. |
+| **Xbox layout** | A/B swapped |
+| **Nintendo layout** | X/Y swapped |
+
+**Key features:**
+- Full analog: main stick, C-stick, and L/R analog triggers all mapped
+- GameCube rumble motor driven by USB host feedback
+- Polled at 125Hz (native GC rate)
+- Data pin: GPIO 29
+
+**Supported boards:**
+
+| Board | Build command |
+|-------|---------------|
+| KB2040 | `make gc2usb_kb2040` |
+
+```bash
+make gc2usb_kb2040
+make flash-gc2usb_kb2040
+```
+
+---
+
+### NES to USB — `nes2usb`
+
+Reads a native NES controller via a PIO-based shift register protocol. 60Hz polling with fractional timing correction for accurate cadence. Automatic connect/disconnect detection with 500ms debounce and stuck-button prevention.
+
+**GPIO pins:** CLK (GPIO 5), LATCH (GPIO 6), DATA (GPIO 8)
+
+**Key features:**
+- Auto-detection: controller connected/disconnected detected via the DATA line state
+- 60Hz polling with fractional correction for accurate timing
+- Stuck-button prevention on disconnect
+- USB output modes: SInput, XInput, PS3, PS4, Switch, Keyboard/Mouse (double-click to cycle, triple-click to reset)
+
+**Supported boards:**
+
+| Board | Build command |
+|-------|---------------|
+| KB2040 | `make nes2usb_kb2040` |
+| Pico W | `make nes2usb_pico_w` |
+
+```bash
+make nes2usb_kb2040
+make flash-nes2usb_kb2040
+```
+
+---
+
+### Neo Geo to USB — `neogeo2usb`
+
+Reads a native Neo Geo arcade stick or controller via GPIO (active-low buttons with internal pull-ups) using a DB15 connector. Supports 4–6 button sticks with D-pad mode hotkeys.
+
+**Key features:**
+- Active-low GPIO polling via DB15 connector with internal pull-ups
+- 4–6 button support (buttons A–D, Select, K3)
+- D-pad mode hotkeys — hold Coin + Start + direction for 2 seconds:
+  - Down: D-pad mode (default)
+  - Left: Left analog stick mode
+  - Right: Right analog stick mode
+- Home button: Coin + Start pressed together acts as Home/Guide
+
+**Supported boards:**
+
+| Board | Build command |
+|-------|---------------|
+| KB2040 | `make neogeo2usb_kb2040` |
+| RP2040-Zero | `make neogeo2usb_rp2040zero` |
+
+```bash
+make neogeo2usb_kb2040
+make flash-neogeo2usb_kb2040
+```
+
+---
+
+## Cross-console bridges
+
+These apps read one retro controller protocol and output a different retro console protocol. No USB is involved on either side — they are pure hardware protocol translators.
+
+| App | Input → Output | Board | Build command |
+|-----|----------------|-------|---------------|
+| `n642dc` | N64 → Dreamcast | KB2040, Pico 2 W | `make n642dc_kb2040` |
+| `snes23do` | SNES → 3DO | RP2040-Zero | `make snes23do_rp2040zero` |
+| `n642nuon` | N64 → Nuon | Pico | `make n642nuon_pico` |
+
+---
+
+### N64 to Dreamcast — `n642dc`
+
+Reads a native N64 controller via joybus and outputs to a Dreamcast via the Maple Bus PIO protocol. Forwards Dreamcast rumble (Puru Puru Pack) vibration commands back to the N64 rumble pak.
+
+**Pin assignments:**
+
+| Signal | GPIO |
+|--------|------|
+| N64 data | GPIO 29 |
+| DC Maple SDCKA | GPIO 2 |
+| DC Maple SDCKB | GPIO 3 |
+
+**Key features:**
+- Full analog: N64 stick mapped to Dreamcast analog stick
+- Rumble forwarding: Dreamcast Puru Puru Pack commands forwarded to N64 rumble pak
+
+**Supported boards:**
+
+| Board | Build command |
+|-------|---------------|
+| KB2040 | `make n642dc_kb2040` |
+| Pico 2 W | `make n642dc_pico2_w` |
+
+```bash
+make n642dc_kb2040
+make flash-n642dc_kb2040
+```
+
+---
+
+### SNES to 3DO — `snes23do`
+
+<Warning>
+`snes23do` is excluded from the default release builds until it matures. Build it explicitly.
+</Warning>
+
+Reads a native SNES or NES controller via GPIO shift register and outputs to a 3DO console via the PBUS PIO protocol. Supports SNES mouse and profile switching.
+
+**GPIO pins:** CLK (GPIO 2), LATCH (GPIO 3), DATA (GPIO 4), DATA1 (GPIO 5), IOBIT (GPIO 6)
+
+**Key features:**
+- Multi-device: SNES controller, NES controller, and SNES mouse all supported
+- Profile switching for different button layouts
+- No USB involved
+
+**Supported boards:**
+
+| Board | Build command |
+|-------|---------------|
+| RP2040-Zero | `make snes23do_rp2040zero` |
+
+```bash
+make snes23do_rp2040zero
+make flash-snes23do_rp2040zero
+```
+
+---
+
+### N64 to Nuon — `n642nuon`
+
+Reads a native N64 controller via joybus and outputs to a Nuon DVD player via the Polyface PIO protocol. A pure cross-console bridge with no USB involvement.
+
+**Pin assignment:** N64 data on GPIO 29
+
+**Supported boards:**
+
+| Board | Build command |
+|-------|---------------|
+| Raspberry Pi Pico | `make n642nuon_pico` |
+
+```bash
+make n642nuon_pico
+make flash-n642nuon_pico
+```
+
+---
+
+## Wiring
+
+All native input apps require you to wire the controller connector to the microcontroller GPIO pins. The exact pins vary by app and board variant.
+
+<Info>
+See the [wiring guide](/hardware/wiring) for USB host port pinouts, console connector pinouts, and notes on voltage levels. Neo Geo output apps require a 1N4148 diode or TXS0108E level shifter for 5V protection.
+</Info>

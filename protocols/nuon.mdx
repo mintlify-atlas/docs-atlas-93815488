@@ -1,0 +1,183 @@
+---
+title: "Nuon Protocol"
+description: "Polyface bidirectional serial protocol for Nuon DVD player controller emulation. Supports up to 8 players, spinner input for Tempest 3000, and hardware-based in-game reset."
+---
+
+The Nuon output interface emulates a Nuon DVD player controller via the bidirectional Polyface serial protocol. It supports up to 4 players (expandable to 8 by the protocol), spinner emulation for Tempest 3000, and in-game reset (IGR) via hardware GPIO pins.
+
+<Info>
+  The Polyface protocol was previously undocumented. The implementation in Joypad OS represents the first open-source reverse-engineered documentation. See `docs/protocols/NUON_POLYFACE.md` for the full wire-level reference.
+</Info>
+
+## Protocol overview
+
+<CardGroup cols={2}>
+  <Card title="Wire protocol" icon="ethernet">
+    Polyface — bidirectional serial with CRC-16 error checking (polynomial 0x8005)
+  </Card>
+  <Card title="PIO programs" icon="code">
+    `polyface_send.pio` (sm1) and `polyface_read.pio` (sm2), runs on Core 1
+  </Card>
+  <Card title="Polling rate" icon="clock">
+    ~60Hz — console polls continuously
+  </Card>
+  <Card title="Max players" icon="users">
+    4 (defined in firmware); Polyface protocol supports up to 8
+  </Card>
+</CardGroup>
+
+### How it works
+
+All communication uses 64-bit packets:
+
+```
+Bit:  63    62    61-54     53-46     45-38     37-30     29-14      13-0
+     START  CTRL  A[7:0]   S[7:0]   C[7:0]   D[7:0]   CRC16      PAD
+```
+
+- **START** (bit 63): Always `1`
+- **CTRL** (bit 62): `1` = READ (Nuon requests data), `0` = WRITE (Nuon sends data)
+- **A[7:0]**: Command/address byte
+- **CRC16**: Computed over data bytes using polynomial `0x8005`
+
+The console sends read/write packets. The adapter responds to probe requests with device identification (type 3, magic number `0x4A554445` = "JUDE" honoring protocol designer Jude Katsch) and returns button/analog state on controller polls.
+
+### Enumeration sequence
+
+Before normal operation, each controller must progress through a stateful enumeration:
+
+<Steps>
+  <Step title="ALIVE (0x80)">
+    Nuon polls for devices at ~60Hz. The controller responds with `0x01` on first contact.
+  </Step>
+  <Step title="MAGIC (0x90)">
+    Nuon authenticates the device. The controller responds with `0x4A554445` ("JUDE").
+  </Step>
+  <Step title="PROBE (0x94)">
+    Nuon queries device type and capabilities. The controller responds with a 32-bit descriptor including type (`3` = gamepad), firmware version, and capability flags.
+  </Step>
+  <Step title="BRAND (0xB4)">
+    Nuon assigns a unique session ID (1–15). The controller stores it and enters ACTIVE state.
+  </Step>
+  <Step title="ACTIVE — normal polling">
+    Nuon continuously polls CONFIG, SWITCH (buttons), CHANNEL + ANALOG (sticks), and QUADX (spinner) at ~60Hz.
+  </Step>
+</Steps>
+
+## GPIO pin assignments
+
+| Signal | GPIO | Notes |
+|--------|------|-------|
+| DATAIO | GP2 | Bidirectional data line |
+| CLKIN | GP3 | Clock input (consecutive with DATAIO) |
+| POWER | GP4 | IGR power control |
+| STOP | GP11 | IGR stop control |
+
+## Player support
+
+- **Max players**: 4 (defined in `nuon_device.h`)
+- **Protocol capacity**: Up to 8 players supported by the Polyface protocol
+
+## Button mapping
+
+| JP_BUTTON_* | Nuon button | Notes |
+|-------------|-------------|-------|
+| `JP_BUTTON_B1` | A | Primary action |
+| `JP_BUTTON_B2` | C-Down | Secondary action |
+| `JP_BUTTON_B3` | B | Alternate action |
+| `JP_BUTTON_B4` | C-Left | C-button |
+| `JP_BUTTON_L1` | L | Left shoulder |
+| `JP_BUTTON_R1` | R | Right shoulder |
+| `JP_BUTTON_L2` | C-Up | C-button |
+| `JP_BUTTON_R2` | C-Right | C-button |
+| `JP_BUTTON_S1` | Nuon | System button |
+| `JP_BUTTON_S2` | Start | Start button |
+| `JP_BUTTON_DU/DD/DL/DR` | D-pad | Direct mapping |
+
+Left stick is also mapped to D-pad directions.
+
+### Button bit layout (16-bit, active HIGH)
+
+| Bit | Button | Hex mask |
+|-----|--------|----------|
+| 15 | C_DOWN | `0x8000` |
+| 14 | A | `0x4000` |
+| 13 | START | `0x2000` |
+| 12 | NUON | `0x1000` |
+| 11 | DOWN | `0x0800` |
+| 10 | LEFT | `0x0400` |
+| 9 | UP | `0x0200` |
+| 8 | RIGHT | `0x0100` |
+| 7 | (reserved, always 1) | `0x0080` |
+| 5 | L | `0x0020` |
+| 4 | R | `0x0010` |
+| 3 | B | `0x0008` |
+| 2 | C_LEFT | `0x0004` |
+| 1 | C_UP | `0x0002` |
+| 0 | C_RIGHT | `0x0001` |
+
+Idle state with no buttons pressed: `0x0080` (bit 7 reserved, always set).
+
+## Analog mapping
+
+Analog values are read through a channel-based system. The Nuon selects a channel via the CHANNEL command (`0x34`), then reads the value via ANALOG (`0x35`).
+
+| Channel | Constant | Description |
+|---------|----------|-------------|
+| `0x00` | `ATOD_CHANNEL_NONE` | Device mode/capabilities packet |
+| `0x01` | `ATOD_CHANNEL_MODE` | Reserved |
+| `0x02` | `ATOD_CHANNEL_X1` | Left stick X |
+| `0x03` | `ATOD_CHANNEL_Y1` | Left stick Y |
+| `0x04` | `ATOD_CHANNEL_X2` | Right stick X / spinner |
+| `0x05` | `ATOD_CHANNEL_Y2` | Right stick Y |
+
+All analog values are 8-bit unsigned: `0x00` = full left/down, `0x80` = center, `0xFF` = full right/up.
+
+<Warning>
+  The Nuon expects Y-axis values where 0 = down and 255 = up — the inverse of the HID standard. The driver inverts Y values from HID sources automatically.
+</Warning>
+
+## Spinner emulation (Tempest 3000)
+
+USB mouse X-axis movement is converted to spinner rotation via the QUADX command (`0x32`), which returns a signed 8-bit delta (-128 to +127):
+
+- Positive = clockwise rotation
+- Negative = counterclockwise rotation
+- Linear response, no acceleration
+- Scale adjustable via `NUON_SPINNER_SCALE` in firmware
+- Auto-detects when a mouse is connected
+
+## In-game reset (IGR)
+
+Hardware-based reset triggered by GPIO pins. Detected by the hotkeys service with debouncing.
+
+**Combo**: Hold **L1 + R1 + Start + Select**
+
+| Action | Trigger | Effect |
+|--------|---------|--------|
+| Tap (< 2 seconds) | STOP pin (GP11) | Returns to DVD menu |
+| Hold (≥ 2 seconds) | POWER pin (GP4) | Powers off the player |
+
+## Build commands
+
+<CodeGroup>
+
+```bash usb2nuon (KB2040)
+make usb2nuon_kb2040
+```
+
+```bash bt2nuon (Pico W)
+make bt2nuon_pico_w
+```
+
+</CodeGroup>
+
+Output: `releases/joypad_<commit>_<app>_<board>.uf2`
+
+## Apps using this output
+
+| App | Description |
+|-----|-------------|
+| `usb2nuon` | USB/Bluetooth controllers to Nuon |
+| `bt2nuon` | Bluetooth controllers to Nuon (Pico W) |
+| `n642nuon` | N64 controllers to Nuon |

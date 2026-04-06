@@ -1,0 +1,308 @@
+---
+title: "Adding a New App"
+description: "How to create a new Joypad OS app that wires input and output interfaces together through the router."
+---
+
+An app is the top-level configuration that binds everything together. It declares which input interfaces to use, which output interfaces to use, and how the router should route between them. The app also registers button-remapping profiles and configures player management.
+
+Apps are named using the convention `<input>2<output>` — for example, `usb2gc` reads from USB host and outputs to GameCube, and `bt2usb` reads from Bluetooth and outputs to USB HID.
+
+## File structure
+
+Every app lives in its own directory under `src/apps/<appname>/` and contains three files:
+
+```
+src/apps/<appname>/
+  app.h        Compile-time configuration: version, routing mode, max players, feature flags
+  app.c        Runtime wiring: input/output interface arrays, router_init(), profile_init()
+  profiles.h   (Optional) Button remapping profile definitions
+```
+
+The firmware calls two functions in every app:
+- `app_init()` — called after the OS initializes all core services
+- `app_task()` — called from the main loop on Core 0 (optional; implement as an empty function if unused)
+
+## Step-by-step
+
+<Steps>
+  <Step title="Create the app directory">
+    ```bash
+    mkdir src/apps/myapp
+    ```
+  </Step>
+
+  <Step title="Write app.h">
+    `app.h` declares compile-time constants that tell the build system which drivers to compile in and how the router should behave. Use `usb2gc` as a reference — its `app.h` is at `src/apps/usb2gc/app.h`.
+
+    ```c
+    // app.h - MyApp manifest
+    #ifndef APP_MYAPP_H
+    #define APP_MYAPP_H
+
+    // Metadata
+    #define APP_NAME        "myapp"
+    #define APP_VERSION     "1.0.0"
+    #define APP_DESCRIPTION "My custom adapter"
+    #define APP_AUTHOR      "yourname"
+
+    // Input drivers to compile in
+    #define REQUIRE_USB_HOST    1
+    #define MAX_USB_DEVICES     4
+
+    // Output drivers to compile in
+    #define REQUIRE_NATIVE_GAMECUBE_OUTPUT 1
+    #define GAMECUBE_OUTPUT_PORTS          1
+
+    // Services
+    #define REQUIRE_FLASH_SETTINGS    1
+    #define REQUIRE_PROFILE_SYSTEM    1
+    #define REQUIRE_PLAYER_MANAGEMENT 1
+
+    // Routing
+    #define ROUTING_MODE    ROUTING_MODE_MERGE
+    #define MERGE_MODE      MERGE_BLEND
+    #define APP_MAX_ROUTES  4
+
+    // Input transformations (see transformation_flags_t in router.h)
+    #define TRANSFORM_FLAGS (TRANSFORM_MOUSE_TO_ANALOG)
+
+    // Player management
+    #define PLAYER_SLOT_MODE   PLAYER_SLOT_FIXED
+    #define MAX_PLAYER_SLOTS   4
+    #define AUTO_ASSIGN_ON_PRESS 1
+
+    // Hardware
+    #define CPU_OVERCLOCK_KHZ  130000   // Required for GameCube joybus timing
+
+    // App interface
+    void app_init(void);
+    void app_task(void);
+
+    #endif // APP_MYAPP_H
+    ```
+
+    Key decisions:
+
+    | Constant | Options | Description |
+    |---|---|---|
+    | `ROUTING_MODE` | `ROUTING_MODE_SIMPLE`, `ROUTING_MODE_MERGE`, `ROUTING_MODE_BROADCAST` | How inputs map to outputs |
+    | `MERGE_MODE` | `MERGE_BLEND`, `MERGE_PRIORITY`, `MERGE_ALL` | How multiple inputs are combined in MERGE mode |
+    | `PLAYER_SLOT_MODE` | `PLAYER_SLOT_FIXED`, `PLAYER_SLOT_SHIFT` | Whether slots stay assigned on disconnect |
+  </Step>
+
+  <Step title="Write app.c">
+    `app.c` implements the runtime wiring. It returns the input and output interfaces to use, initializes the router, and registers profiles.
+
+    ```c
+    // app.c - MyApp entry point
+    #include "app.h"
+    #include "profiles.h"
+    #include "core/router/router.h"
+    #include "core/services/players/manager.h"
+    #include "core/services/profiles/profile.h"
+    #include "core/input_interface.h"
+    #include "core/output_interface.h"
+    #include "native/device/gamecube/gamecube_device.h"
+    #include "usb/usbh/usbh.h"
+
+    // Profile configuration (references gc_profile_set from profiles.h)
+    static const profile_config_t app_profile_config = {
+        .output_profiles = {
+            [OUTPUT_TARGET_GAMECUBE] = &gc_profile_set,
+        },
+        .shared_profiles = &gc_profile_set,
+    };
+
+    // Input interfaces this app uses
+    static const InputInterface* input_interfaces[] = {
+        &usbh_input_interface,
+    };
+
+    const InputInterface** app_get_input_interfaces(uint8_t* count)
+    {
+        *count = sizeof(input_interfaces) / sizeof(input_interfaces[0]);
+        return input_interfaces;
+    }
+
+    // Output interfaces this app uses
+    extern const OutputInterface gamecube_output_interface;
+
+    static const OutputInterface* output_interfaces[] = {
+        &gamecube_output_interface,
+    };
+
+    const OutputInterface** app_get_output_interfaces(uint8_t* count)
+    {
+        *count = sizeof(output_interfaces) / sizeof(output_interfaces[0]);
+        return output_interfaces;
+    }
+
+    void app_init(void)
+    {
+        // Configure router
+        router_config_t router_cfg = {
+            .mode = ROUTING_MODE,
+            .merge_mode = MERGE_MODE,
+            .max_players_per_output = {
+                [OUTPUT_TARGET_GAMECUBE] = GAMECUBE_OUTPUT_PORTS,
+            },
+            .merge_all_inputs = true,
+            .transform_flags = TRANSFORM_FLAGS,
+            .mouse_drain_rate = 8,
+        };
+        router_init(&router_cfg);
+
+        // Add route: USB host → GameCube
+        router_add_route(INPUT_SOURCE_USB_HOST, OUTPUT_TARGET_GAMECUBE, 0);
+
+        // Configure player management
+        player_config_t player_cfg = {
+            .slot_mode = PLAYER_SLOT_MODE,
+            .max_slots = MAX_PLAYER_SLOTS,
+            .auto_assign_on_press = AUTO_ASSIGN_ON_PRESS,
+        };
+        players_init_with_config(&player_cfg);
+
+        // Initialize profile system
+        profile_init(&app_profile_config);
+    }
+
+    void app_task(void)
+    {
+        // Forward rumble from GameCube console to USB controllers
+        if (gamecube_output_interface.get_rumble) {
+            uint8_t rumble = gamecube_output_interface.get_rumble();
+            for (int i = 0; i < playersCount; i++) {
+                feedback_set_rumble(i, rumble, rumble);
+            }
+        }
+    }
+    ```
+
+    <Note>
+      The router `input_source_t` and `output_target_t` constants are defined in `src/core/router/router.h`. Use `INPUT_SOURCE_USB_HOST`, `INPUT_SOURCE_BLE_CENTRAL`, `INPUT_SOURCE_NATIVE_GC`, etc.
+    </Note>
+  </Step>
+
+  <Step title="Write profiles.h (optional)">
+    If your app needs button remapping, define profiles in `profiles.h`. Each profile maps `JP_BUTTON_*` source buttons to console-specific output buttons. Profile cycling is built in: hold SELECT for 2 seconds, then press D-pad Up or Down.
+
+    ```c
+    // profiles.h - MyApp profile definitions
+    #ifndef MYAPP_PROFILES_H
+    #define MYAPP_PROFILES_H
+
+    #include "core/services/profiles/profile.h"
+    #include "native/device/gamecube/gamecube_buttons.h"
+
+    // Default button mapping
+    static const button_map_entry_t gc_default_map[] = {
+        MAP_BUTTON(JP_BUTTON_B1, GC_BUTTON_B),      // Cross/B → GC B
+        MAP_BUTTON(JP_BUTTON_B2, GC_BUTTON_A),      // Circle/A → GC A
+        MAP_BUTTON(JP_BUTTON_B3, GC_BUTTON_Y),      // Square/X → GC Y
+        MAP_BUTTON(JP_BUTTON_B4, GC_BUTTON_X),      // Triangle/Y → GC X
+        MAP_BUTTON(JP_BUTTON_R1, GC_BUTTON_Z),      // R1/RB → Z
+        MAP_DISABLED(JP_BUTTON_L1),                  // L1/LB → nothing
+        MAP_BUTTON(JP_BUTTON_S2, GC_BUTTON_START),  // Start → Start
+        MAP_DISABLED(JP_BUTTON_S1),                  // Select → profile switch
+    };
+
+    static const profile_t gc_profile_default = {
+        .name = "default",
+        .description = "Standard GameCube mapping",
+        .button_map = gc_default_map,
+        .button_map_count = sizeof(gc_default_map) / sizeof(gc_default_map[0]),
+        .l2_behavior = TRIGGER_PASSTHROUGH,
+        .r2_behavior = TRIGGER_PASSTHROUGH,
+        .l2_threshold = 250,
+        .r2_threshold = 250,
+        .left_stick_sensitivity = 1.0f,
+        .right_stick_sensitivity = 1.0f,
+        .socd_mode = SOCD_PASSTHROUGH,
+    };
+
+    static const profile_t gc_profiles[] = {
+        gc_profile_default,
+    };
+
+    static const profile_set_t gc_profile_set = {
+        .profiles = gc_profiles,
+        .profile_count = sizeof(gc_profiles) / sizeof(gc_profiles[0]),
+        .default_index = 0,
+    };
+
+    #endif // MYAPP_PROFILES_H
+    ```
+
+    If you do not need remapping, omit `profiles.h` and remove the profile system includes from `app.c`. Inputs will pass through unchanged.
+  </Step>
+
+  <Step title="Add a CMake target">
+    Add your app's build target to `src/CMakeLists.txt`. Copy an existing block — for example the `joypad_ngc` target — and change the app name and source paths:
+
+    ```cmake
+    # MyApp — USB/BT to GameCube
+    if(APP STREQUAL "myapp")
+        add_executable(joypad_myapp
+            main.c
+            apps/myapp/app.c
+            native/device/gamecube/gamecube_device.c
+            # … other required sources
+        )
+        target_compile_definitions(joypad_myapp PRIVATE
+            APP_MYAPP=1
+        )
+        target_include_directories(joypad_myapp PRIVATE
+            apps/myapp
+            ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+        # … pico_sdk_import, target_link_libraries, etc.
+    endif()
+    ```
+  </Step>
+
+  <Step title="Add Makefile targets">
+    Add build targets to the top-level `Makefile` so `make myapp_kb2040` works. Add the app to the `APPS` list as well to include it in `make all`:
+
+    ```makefile
+    # Add to APPS list near the top
+    APPS := usb2gc usb2pce usb2dc ... myapp
+
+    # Add board-specific targets
+    myapp_kb2040:
+        APP=myapp BOARD=kb2040 $(MAKE) -C src -j$(JOBS) joypad_myapp
+
+    myapp_pico_w:
+        APP=myapp BOARD=pico_w $(MAKE) -C src -j$(JOBS) joypad_myapp
+    ```
+  </Step>
+
+  <Step title="Build and test">
+    ```bash
+    make myapp_kb2040
+    make flash-myapp_kb2040
+    ```
+
+    The output UF2 file lands in `releases/joypad_<commit>_myapp_kb2040.uf2`.
+
+    <Tip>
+      Add your app to `.github/workflows/build.yml` so CI builds it on every push to `main`.
+    </Tip>
+  </Step>
+</Steps>
+
+## Routing mode reference
+
+| Mode | Description | When to use |
+|---|---|---|
+| `ROUTING_MODE_SIMPLE` | Device N routes to output slot N (1:1) | Fixed-port adapters |
+| `ROUTING_MODE_MERGE` | All inputs combined into a single output slot | Single-port console adapters (GameCube, Dreamcast) |
+| `ROUTING_MODE_BROADCAST` | One input sent to all output slots | Broadcast scenarios |
+| `ROUTING_MODE_CONFIGURABLE` | N:M user-defined routing table | Universal adapter apps |
+
+## Player slot mode reference
+
+| Mode | Description |
+|---|---|
+| `PLAYER_SLOT_FIXED` | Slots stay assigned when a controller disconnects; reconnects return to the same slot |
+| `PLAYER_SLOT_SHIFT` | Slots shift down on disconnect; the next controller always takes slot 1 |

@@ -1,0 +1,198 @@
+---
+title: "PCEngine Protocol"
+description: "Multiplexed 4-bit parallel bus protocol for PCEngine and TurboGrafx-16 controller emulation. Supports up to 5 players via multitap, 2-button and 6-button modes, and mouse input."
+---
+
+The PCEngine output interface emulates a PCEngine multitap with up to 5 controllers. It supports 2-button, 3-button, and 6-button controller modes as well as mouse emulation. Three PIO state machines on Core 1 handle the timing-critical multiplexed output.
+
+## Protocol overview
+
+<CardGroup cols={2}>
+  <Card title="Wire protocol" icon="ethernet">
+    Multiplexed 4-bit parallel bus — 4 data lines, 1 select line, 1 clock/OE line
+  </Card>
+  <Card title="Encoding" icon="toggle-left">
+    Active LOW — 0 = pressed, 1 = released, 0xF = idle
+  </Card>
+  <Card title="PIO programs" icon="code">
+    Three state machines on PIO0: `plex.pio` (sm1), `clock.pio` (sm2), `select.pio` (sm3)
+  </Card>
+  <Card title="Max players" icon="users">
+    5 via PCEngine multitap
+  </Card>
+</CardGroup>
+
+### How it works
+
+The console scans controller ports sequentially. Each scan cycle toggles the SEL line to read two nibbles per controller: the D-pad on SEL HIGH and buttons on SEL LOW. The CLR/OE line going LOW starts a scan; going HIGH resets the counter back to Player 1.
+
+```
+CLR:  ────┐         ┌─────────────────┐
+          └─────────┘                 └────  (LOW = scan active)
+
+SEL:  ────┐   ┌───┐   ┌───┐   ┌───┐   ┌──  (toggles between nibbles)
+          └───┘   └───┘   └───┘   └───┘
+
+D0-3: ──[D-PAD]─[BTNS]─[D-PAD]─[BTNS]────
+```
+
+## Connector pinout
+
+The PCEngine controller port uses an **8-pin DIN connector**:
+
+| Pin | Signal | Direction | Description |
+|-----|--------|-----------|-------------|
+| 1 | VCC | — | +5V power supply |
+| 2 | D0 | Controller → Console | Data bit 0 (active LOW) |
+| 3 | D1 | Controller → Console | Data bit 1 (active LOW) |
+| 4 | D2 | Controller → Console | Data bit 2 (active LOW) |
+| 5 | D3 | Controller → Console | Data bit 3 (active LOW) |
+| 6 | SEL | Console → Controller | Select (nibble toggle) |
+| 7 | CLR/OE | Console → Controller | Clear/Output Enable (scan reset) |
+| 8 | GND | — | Ground |
+
+<Info>
+  Pin 7 is labeled **OE** (Output Enable) in some references and **CLR** (Clear) in others. They are the same signal. In the Joypad OS source code the legacy names `DATAIN_PIN` (GP18) for SEL and `CLKIN_PIN` (GP19) for CLR/OE are used.
+</Info>
+
+## GPIO pin assignments
+
+<Tabs>
+  <Tab title="KB2040 (default)">
+    | Signal | GPIO | Notes |
+    |--------|------|-------|
+    | D0 | GP26 | Data bit 0 (consecutive out group) |
+    | D1 | GP27 | Data bit 1 |
+    | D2 | GP28 | Data bit 2 |
+    | D3 | GP29 | Data bit 3 |
+    | SEL | GP18 | Nibble toggle from console |
+    | CLR/OE | GP19 | Scan reset from console |
+  </Tab>
+  <Tab title="Pico">
+    | Signal | GPIO |
+    |--------|------|
+    | D0–D3 | GP4–GP7 |
+    | SEL | GP18 |
+    | CLR/OE | GP19 |
+  </Tab>
+</Tabs>
+
+## Player support
+
+- **Max players**: 5 (PCEngine multitap)
+- **Assignment**: First connected = Player 1
+- **Persistence**: Player slots persist until disconnect; no shifting on disconnect
+
+## Button mapping
+
+### Standard controller (6-button)
+
+| JP_BUTTON_* | PCEngine button | Notes |
+|-------------|-----------------|-------|
+| `JP_BUTTON_B1` | II | Primary action |
+| `JP_BUTTON_B2` | I | Secondary action |
+| `JP_BUTTON_B3` | IV (Turbo II) | Auto-fire version of II |
+| `JP_BUTTON_B4` | III (Turbo I) | Auto-fire version of I |
+| `JP_BUTTON_L1` | VI | 6-button mode only |
+| `JP_BUTTON_R1` | V | 6-button mode only |
+| `JP_BUTTON_S1` | Select | Select button |
+| `JP_BUTTON_S2` | Run | Start/Run button |
+| `JP_BUTTON_DU/DD/DL/DR` | D-pad | Direct mapping |
+
+### Button modes
+
+| Mode | Constant | Buttons active |
+|------|----------|----------------|
+| 2-button | `BUTTON_MODE_2` | I, II only |
+| 6-button | `BUTTON_MODE_6` | I through VI |
+| 3-button (Select) | `BUTTON_MODE_3_SEL` | I, II, Select |
+| 3-button (Run) | `BUTTON_MODE_3_RUN` | I, II, Run |
+
+## Protocol details
+
+### Nibble encoding
+
+All data uses 4-bit nibbles with active LOW encoding. The full byte per controller is assembled as:
+
+```
+Bit:  7     6      5      4    |  3    2       1   0
+     Left  Down  Right   Up   | Run  Select   II  I
+     ←── SEL=HIGH (D-pad) ──→   ←── SEL=LOW (Buttons) ──→
+```
+
+### 6-button mode
+
+6-button mode uses a 4-scan cycle with a rotating state counter (3 → 2 → 1 → 0). On even states (2, 0) the D-pad nibble outputs all zeros, which serves as the 6-button identification signature — physically impossible to press all four D-pad directions simultaneously.
+
+```
+6-Button Extended (states 2, 0):
+Bit:  7    6    5    4   |  3    2    1    0
+      0    0    0    0   | VI    V   IV   III
+     ←── SEL=HIGH (0) ─→   ←── SEL=LOW (ext) ──→
+```
+
+### Multitap scanning
+
+The multitap outputs data for each player sequentially. A full 5-player scan requires 10 nibbles (5 players × 2 nibbles each):
+
+```
+SEL toggles:  P1_dpad  P1_btns  P2_dpad  P2_btns  ...  P5_dpad  P5_btns
+Nibble #:        1        2        3        4      ...     9       10
+```
+
+CLR going HIGH resets the player counter to Player 1. The scan state (3/2/1/0) advances only at the CLR rising edge and remains constant for the entire scan.
+
+### Scan cycle timing
+
+| Parameter | Value |
+|-----------|-------|
+| CLR LOW duration | ~400–500 µs |
+| SEL toggle period | ~50–100 µs |
+| Full scan cycle | ~600–800 µs |
+
+## Mouse support
+
+Mouse is auto-detected when a USB mouse is connected — no manual switching needed.
+
+| USB mouse | PCEngine mouse |
+|-----------|----------------|
+| Left click | Left button |
+| Right click | Right button |
+| Movement | Movement (1:1) |
+
+The mouse protocol sends 8-bit signed X/Y deltas split into nibbles across 4 scan cycles:
+
+| State | Nibble 1 (SEL=HIGH) | Nibble 2 (SEL=LOW) |
+|-------|----------------------|---------------------|
+| 3 | X delta upper nibble | Buttons |
+| 2 | X delta lower nibble | Buttons |
+| 1 | Y delta upper nibble | Buttons |
+| 0 | Y delta lower nibble | Buttons |
+
+Delta encoding: Left/Up = `0x01`–`0x7F`, Right/Down = `0x80`–`0xFF`, no movement = `0x00`.
+
+<Tip>
+  USB mice report at 125–1000Hz while the PCEngine scans at ~60Hz. Deltas are accumulated between scans and cleared after each complete 4-scan mouse read.
+</Tip>
+
+## Analog and feedback
+
+PCEngine controllers are fully digital. Left stick input is converted to D-pad directions. PCEngine provides no feedback channel — no rumble, no LEDs.
+
+## Build commands
+
+<CodeGroup>
+
+```bash usb2pce (KB2040)
+make usb2pce_kb2040
+```
+
+</CodeGroup>
+
+Output: `releases/joypad_<commit>_usb2pce_kb2040.uf2`
+
+## Apps using this output
+
+| App | Description |
+|-----|-------------|
+| `usb2pce` | USB/Bluetooth controllers to PCEngine/TurboGrafx-16 |
